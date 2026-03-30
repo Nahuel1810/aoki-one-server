@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PLC MQTT Publisher</title>
+    <style>
+      :root {
+        --bg: #f4f8fa;
+        --panel: #ffffff;
+        --ink: #162129;
+        --muted: #4e5f6f;
+        --accent: #0b6c7e;
+        --accent-2: #085564;
+        --ok: #0a7a39;
+        --err: #b42318;
+        --border: #d4dde5;
+        --surface: #edf4f8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 600px at 0% -10%, #ffffff 0%, transparent 70%),
+          linear-gradient(160deg, #eef5f8 0%, var(--bg) 45%, #edf6fb 100%);
+        min-height: 100vh;
+      }
+
+      .wrap {
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 32px 16px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: 0 16px 40px rgba(11, 26, 36, 0.1);
+      }
+
+      .tag {
+        display: inline-block;
+        background: var(--surface);
+        color: var(--accent-2);
+        border: 1px solid #c5dbe4;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 6px 10px;
+        margin-bottom: 10px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0 0 20px;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+
+      label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        outline: none;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      input:focus,
+      select:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+      }
+
+      textarea {
+        min-height: 110px;
+        resize: vertical;
+      }
+
+      .hint {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent) 0%, #13839b 100%);
+        color: #ffffff;
+        font-weight: 700;
+        padding: 13px 14px;
+        cursor: pointer;
+        transition: transform 0.12s ease, filter 0.2s ease;
+      }
+
+      button:hover {
+        filter: brightness(0.95);
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .status {
+        margin-top: 16px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        font-size: 14px;
+        display: none;
+      }
+
+      .status.ok {
+        display: block;
+        color: var(--ok);
+        background: #ecfdf3;
+        border: 1px solid #b7ebc8;
+      }
+
+      .status.err {
+        display: block;
+        color: var(--err);
+        background: #fef3f2;
+        border: 1px solid #f9c5c2;
+      }
+
+      pre {
+        margin-top: 14px;
+        background: #0d1117;
+        color: #c9d1d9;
+        border-radius: 10px;
+        padding: 12px;
+        overflow-x: auto;
+      }
+
+      @media (max-width: 640px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+
+        .card {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <span class="tag">MQTT PLC</span>
+        <h1>Publicador PLC MQTT</h1>
+        <p>Elegi tipo, numero y canal, escribi el comando y se envia automaticamente.</p>
+
+        <form id="publisherForm" class="grid">
+          <div class="row">
+            <div>
+              <label for="tipo">Tipo</label>
+              <select id="tipo" name="tipo" required>
+                <option value="elevador">Elevador</option>
+                <option value="carro">Carro</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="deviceId">Numero</label>
+              <input id="deviceId" name="deviceId" type="number" min="1" step="1" value="1" required />
+            </div>
+
+            <div>
+              <label for="channel">Canal</label>
+              <select id="channel" name="channel" required>
+                <option value="cmd">Command (cmd)</option>
+                <option value="state">State</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label for="cmd">Comando (cmd)</label>
+            <input id="cmd" name="cmd" type="text" value="12345" required />
+            <div class="hint">Acepta numero, texto o JSON valido.</div>
+          </div>
+
+          <button type="submit">Enviar comando</button>
+        </form>
+
+        <div id="status" class="status"></div>
+        <pre id="response">Esperando envio...</pre>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("publisherForm");
+      const statusBox = document.getElementById("status");
+      const responseBox = document.getElementById("response");
+
+      function parseLooseValue(raw) {
+        const value = String(raw ?? "").trim();
+
+        if (value === "") {
+          return "";
+        }
+
+        try {
+          return JSON.parse(value);
+        } catch {
+          if (/^-?\d+(\.\d+)?$/.test(value)) {
+            return Number(value);
+          }
+
+          return value;
+        }
+      }
+
+      function showStatus(kind, message) {
+        statusBox.className = `status ${kind}`;
+        statusBox.textContent = message;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const tipo = document.getElementById("tipo").value;
+        const deviceIdRaw = document.getElementById("deviceId").value.trim();
+        const channel = document.getElementById("channel").value;
+        const cmdRaw = document.getElementById("cmd").value;
+        const deviceId = Number(deviceIdRaw);
+
+        if (!Number.isInteger(deviceId) || deviceId < 1) {
+          showStatus("err", "El numero debe ser un entero mayor o igual a 1");
+          return;
+        }
+
+        const topic = `plc/${tipo}/${deviceId}/${channel}`;
+
+        const payload = {
+          cmd: parseLooseValue(cmdRaw),
+          ts: Math.floor(Date.now() / 1000),
+        };
+
+        try {
+          const res = await fetch("/api/plc/publish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ topic, payload }),
+          });
+
+          const data = await res.json();
+
+          responseBox.textContent = JSON.stringify(data, null, 2);
+          if (!res.ok || data.ok === false) {
+            showStatus("err", data.error || "No se pudo publicar");
+            return;
+          }
+
+          showStatus("ok", "Comando publicado correctamente");
+        } catch (error) {
+          responseBox.textContent = String(error);
+          showStatus("err", "Error de red o servidor no disponible");
+        }
+      });
+    </script>
+  </body>
+</html>
