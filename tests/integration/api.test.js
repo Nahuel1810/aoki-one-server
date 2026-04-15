@@ -58,7 +58,7 @@ test("API permite registrar dispositivo y crear orden", async () => {
       body: JSON.stringify({
         type: "PICK",
         robotId: "1",
-        locationCode: "3X04A3",
+        locationCode: "3X04AA3",
       }),
     });
 
@@ -91,7 +91,7 @@ test("API simula traduccion de ubicacion sin crear orden", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "PICK",
-        locationCode: "3X04A3",
+        locationCode: "3X04AA3",
       }),
     });
 
@@ -131,7 +131,7 @@ test("API rechaza locationCode con accion final en alta de orden", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "PICK",
-        locationCode: "3X04A3T",
+        locationCode: "3X04AA3T",
       }),
     });
 

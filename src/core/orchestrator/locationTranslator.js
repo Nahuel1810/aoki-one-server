@@ -52,11 +52,11 @@ function inferRobotIdFromEstanteria(estanteriaCode, options = {}) {
 
 function parseLocationCode(input, options = {}) {
   const value = String(input || "").trim().toUpperCase();
-  const regex = /^(\d+X)(\d{2})([A-L])(\d)([TDL])?$/;
+  const regex = /^(\d+X)(\d{2})A([A-L])(\d)([TDL])?$/;
   const match = value.match(regex);
 
   if (!match) {
-    throw new Error("Formato de ubicacion invalido. Esperado: 3X04A3, 3X04A3T o 3X04A3D");
+    throw new Error("Formato de ubicacion invalido. Esperado: 3X04AA3, 3X04AA3T o 3X04AA3D");
   }
 
   const [, estanteriaCode, moduleCode, levelLetter, positionText, actionRaw] = match;
@@ -69,7 +69,7 @@ function parseLocationCode(input, options = {}) {
 
   return {
     raw: value,
-    baseCode: `${estanteriaCode}${moduleCode}${levelLetter}${position}`,
+    baseCode: `${estanteriaCode}${moduleCode}A${levelLetter}${position}`,
     estanteriaCode,
     robotId: inferRobotIdFromEstanteria(estanteriaCode, options),
     moduleCode,

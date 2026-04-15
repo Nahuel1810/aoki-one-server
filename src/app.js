@@ -8,6 +8,8 @@ const { ConnectionService } = require("./core/connection/ConnectionService");
 const { OrchestratorService } = require("./core/orchestrator/OrchestratorService");
 const { FileEventStore } = require("./infra/persistence/FileEventStore");
 const { SnapshotStore } = require("./infra/persistence/SnapshotStore");
+const { SqliteEventStore } = require("./infra/persistence/SqliteEventStore");
+const { SqliteSnapshotStore } = require("./infra/persistence/SqliteSnapshotStore");
 const { createOrdersRoutes } = require("./interfaces/api/ordersRoutes");
 const { createDevicesRoutes } = require("./interfaces/api/devicesRoutes");
 
@@ -27,8 +29,29 @@ function createApp(options = {}) {
   const stateManager = options.stateManager || new StateManager();
   const errorHandler = options.errorHandler || new ErrorHandler({ logger });
   const deviceRegistry = options.deviceRegistry || new DeviceRegistry();
-  const eventStore = options.eventStore || new FileEventStore();
-  const snapshotStore = options.snapshotStore || new SnapshotStore();
+  const persistenceDriver = String(
+    options.persistenceDriver || process.env.PERSISTENCE_DRIVER || "sqlite"
+  ).toLowerCase();
+
+  let eventStore = options.eventStore;
+  let snapshotStore = options.snapshotStore;
+
+  if (!eventStore || !snapshotStore) {
+    if (persistenceDriver === "sqlite") {
+      try {
+        const sqliteOptions = { dbPath: options.sqliteDbPath || process.env.SQLITE_DB_PATH };
+        eventStore = eventStore || new SqliteEventStore(sqliteOptions);
+        snapshotStore = snapshotStore || new SqliteSnapshotStore(sqliteOptions);
+      } catch (error) {
+        logger.warn?.(
+          `[persistence] sqlite unavailable (${error.message}). Falling back to file stores.`
+        );
+      }
+    }
+
+    eventStore = eventStore || new FileEventStore();
+    snapshotStore = snapshotStore || new SnapshotStore();
+  }
 
   const simulatePlc =
     typeof options.simulatePlc === "boolean"

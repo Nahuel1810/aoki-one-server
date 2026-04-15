@@ -9,9 +9,7 @@ Servidor Node.js para orquestar pedidos PICK/PUT sobre robots PLC (carro + eleva
 - Orquestador con secuencia fija de pasos:
   - HOMING -> ELEVADOR -> CARRO_BUSCA -> ELEVADOR -> CARRO_DEJA/CARRO_DEVUELVE -> HOMING
 - Retry con backoff por paso.
-- Persistencia liviana en archivos:
-  - `data/events.ndjson`
-  - `data/snapshot.json`
+- Persistencia por defecto en SQLite (`data/persistence.db`) con fallback a archivos si SQLite no esta disponible.
 - Frontend basico en `/` para registrar dispositivos y crear pedidos.
 
 ## Requisitos
@@ -31,6 +29,8 @@ Crear `.env` desde `.env.example`:
 
 ```bash
 HTTP_PORT=3000
+PERSISTENCE_DRIVER=sqlite
+SQLITE_DB_PATH=data/persistence.db
 SIMULATE_PLC=true
 ORCHESTRATOR_TICK_MS=300
 MAX_RETRIES_PER_STEP=3
@@ -43,6 +43,9 @@ MODBUS_VERIFY_REGISTER=1
 Notas:
 - `SIMULATE_PLC=true` permite probar el orquestador sin PLC real.
 - Para planta real, usar `SIMULATE_PLC=false` y registrar dispositivos con IP/puerto/unitId correctos.
+- Persistencia:
+  - `PERSISTENCE_DRIVER=sqlite` usa base SQLite para eventos y snapshot.
+  - `PERSISTENCE_DRIVER=file` mantiene el modo legacy (`data/events.ndjson` y `data/snapshot.json`).
 
 ## Ejecucion
 
