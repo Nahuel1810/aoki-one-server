@@ -83,3 +83,57 @@ test("Orchestrator marca error cuando agota retries", async () => {
   assert.equal(result.ok, false);
   assert.equal(fakeConnection.calls.length, 3);
 });
+
+test("Orchestrator rehidrata snapshot y reencola ordenes pendientes", () => {
+  const fakeConnection = createFakeConnectionService();
+  const { orchestrator, queueManager, stateManager } = buildOrchestrator(fakeConnection);
+
+  const snapshot = {
+    orders: [
+      {
+        id: "o-pending",
+        type: "PICK",
+        status: "PENDING",
+        robotId: "1",
+        currentStepIndex: 0,
+        steps: [{ id: 1, type: "HOMING", deviceType: "CARRO", status: "PENDING", retries: 0 }],
+        history: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "o-running",
+        type: "PICK",
+        status: "IN_PROGRESS",
+        robotId: "1",
+        currentStepIndex: 0,
+        steps: [{ id: 1, type: "HOMING", deviceType: "CARRO", status: "IN_PROGRESS", retries: 0 }],
+        history: [],
+        createdAt: 2,
+        updatedAt: 2,
+      },
+      {
+        id: "o-done",
+        type: "PICK",
+        status: "DONE",
+        robotId: "1",
+        currentStepIndex: 1,
+        steps: [{ id: 1, type: "HOMING", deviceType: "CARRO", status: "DONE", retries: 0 }],
+        history: [],
+        createdAt: 3,
+        updatedAt: 3,
+      },
+    ],
+    robots: [{ id: "1", status: "BUSY", currentOrderId: "o-running", enabled: true, updatedAt: 1 }],
+    devices: [],
+    commands: [],
+    errors: [],
+  };
+
+  orchestrator.rehydrateFromSnapshot(snapshot);
+
+  assert.equal(stateManager.getOrder("o-running").status, "PENDING");
+  assert.equal(queueManager.dequeueNext("1"), "o-pending");
+  assert.equal(queueManager.dequeueNext("1"), "o-running");
+  assert.equal(queueManager.dequeueNext("1"), null);
+});

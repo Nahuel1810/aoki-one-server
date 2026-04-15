@@ -9,6 +9,40 @@ class StateManager {
     this.errors = [];
   }
 
+  reset() {
+    this.orders.clear();
+    this.robots.clear();
+    this.devices.clear();
+    this.commands.clear();
+    this.errors = [];
+  }
+
+  hydrateFromSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") {
+      return;
+    }
+
+    this.reset();
+
+    for (const order of snapshot.orders || []) {
+      this.orders.set(order.id, order);
+    }
+
+    for (const robot of snapshot.robots || []) {
+      this.robots.set(robot.id, robot);
+    }
+
+    for (const device of snapshot.devices || []) {
+      this.devices.set(`${device.robotId}:${device.type}`, device);
+    }
+
+    for (const command of snapshot.commands || []) {
+      this.commands.set(command.id, command);
+    }
+
+    this.errors = Array.isArray(snapshot.errors) ? [...snapshot.errors] : [];
+  }
+
   upsertRobot(robot) {
     const current = this.robots.get(robot.id) || {};
     const merged = {

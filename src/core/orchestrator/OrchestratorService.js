@@ -1,3 +1,5 @@
+const { CARRO, buildElevadorIrNivel } = require("../../config/plcProtocol");
+
 class OrchestratorService {
   constructor(options) {
     this.queueManager = options.queueManager;
@@ -28,6 +30,15 @@ class OrchestratorService {
     return raw.slice(0, 1);
   }
 
+  static inferLevel(locationCode) {
+    const digits = String(locationCode || "").replace(/\D/g, "");
+    if (digits.length < 2) {
+      return 0;
+    }
+
+    return Number(digits.slice(1, 3));
+  }
+
   buildSteps(orderType) {
     return [
       { id: 1, type: "HOMING", deviceType: "CARRO", status: "PENDING", retries: 0 },
@@ -48,10 +59,11 @@ class OrchestratorService {
   resolveStepCommand(step, order) {
     const locationNumber = Number(order.locationCode) || 0;
     const targetNumber = Number(order.targetLocation) || locationNumber;
+    const level = OrchestratorService.inferLevel(order.locationCode);
 
     const commandCodes = {
-      HOMING: 90000,
-      ELEVADOR: 70000,
+      HOMING: CARRO.COMMANDS.INIT,
+      ELEVADOR: buildElevadorIrNivel(level),
       CARRO_BUSCA: locationNumber,
       CARRO_DEJA: targetNumber,
       CARRO_DEVUELVE: targetNumber,
@@ -61,9 +73,43 @@ class OrchestratorService {
       commandCode: commandCodes[step.type] || 0,
       address: Number(process.env.MODBUS_COMMAND_REGISTER || 0),
       value: commandCodes[step.type] || 0,
+      responseAddress: Number(process.env.MODBUS_RESPONSE_REGISTER || 2),
+      expectedResponses: [100],
       verifyAddress: Number(process.env.MODBUS_VERIFY_REGISTER || 1),
       expectedValue: step.id,
     };
+  }
+
+  rehydrateFromSnapshot(snapshot) {
+    if (!snapshot) {
+      return;
+    }
+
+    this.stateManager.hydrateFromSnapshot(snapshot);
+    this.queueManager.clear();
+
+    const orders = this.stateManager.listOrders().sort((a, b) => a.createdAt - b.createdAt);
+    for (const order of orders) {
+      let currentStatus = order.status;
+
+      if (order.status === "IN_PROGRESS") {
+        this.stateManager.updateOrder(order.id, { status: "PENDING" });
+        this.stateManager.pushOrderHistory(order.id, "ORDER_RECOVERED_FROM_IN_PROGRESS");
+        currentStatus = "PENDING";
+      }
+
+      if (currentStatus === "PENDING") {
+        this.queueManager.enqueue({ ...order, status: "PENDING" });
+      }
+    }
+
+    for (const robot of this.stateManager.listRobots()) {
+      if (robot.status !== "ERROR") {
+        this.stateManager.upsertRobot({ id: robot.id, status: "IDLE", currentOrderId: null });
+      }
+    }
+
+    this.eventStore.append({ entityType: "SYSTEM", entityId: "orchestrator", event: "SNAPSHOT_REHYDRATED" });
   }
 
   submitOrder(input) {

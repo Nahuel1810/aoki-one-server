@@ -1,4 +1,5 @@
 const { ModbusClient } = require("../../infra/transport/modbus/ModbusClient");
+const { decodeResponse } = require("../../config/plcProtocol");
 
 class ConnectionService {
   constructor(options) {
@@ -6,7 +7,10 @@ class ConnectionService {
     this.stateManager = options.stateManager;
     this.logger = options.logger || console;
     this.simulate = options.simulate ?? true;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs || Number(process.env.HEARTBEAT_INTERVAL_MS || 1000);
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs || Number(process.env.HEARTBEAT_TIMEOUT_MS || 3000);
     this.clients = new Map();
+    this.monitorTimer = null;
   }
 
   deviceKey(robotId, type) {
@@ -33,11 +37,40 @@ class ConnectionService {
           port: device.port || 502,
           unitId: device.unitId || 1,
           timeoutMs: device.timeoutMs || 2000,
+          retryAttempts: Number(process.env.MODBUS_RETRY_ATTEMPTS || 3),
+          retryBackoffMs: Number(process.env.MODBUS_RETRY_BACKOFF_MS || 300),
         })
       );
     }
 
     return this.clients.get(key);
+  }
+
+  startMonitoring() {
+    if (this.monitorTimer) {
+      return;
+    }
+
+    this.monitorTimer = setInterval(() => {
+      this.monitorTick().catch((error) => {
+        this.logger.warn("[connection] monitor tick failed", { error: error.message });
+      });
+    }, this.heartbeatIntervalMs);
+  }
+
+  stopMonitoring() {
+    if (!this.monitorTimer) {
+      return;
+    }
+
+    clearInterval(this.monitorTimer);
+    this.monitorTimer = null;
+  }
+
+  async monitorTick() {
+    for (const robot of this.stateManager.listRobots()) {
+      await this.heartbeat(robot.id);
+    }
   }
 
   async connectDevice(device) {
@@ -93,11 +126,49 @@ class ConnectionService {
         this.stateManager.upsertDevice({
           ...device,
           status: "DISCONNECTED",
-          lastSeen: Date.now(),
+          lastSeen: device.lastSeen,
           lastResponse: { error: error.message },
+        });
+
+        if (!this.simulate) {
+          try {
+            await this.connectDevice(device);
+          } catch {
+            // Ignore reconnect error here; monitor loop will keep retrying.
+          }
+        }
+      }
+
+      const latest = this.getDevice(robotId, device.type);
+      if (latest?.lastSeen && Date.now() - latest.lastSeen > this.heartbeatTimeoutMs) {
+        this.deviceRegistry.updateStatus(robotId, device.type, "OFFLINE", {
+          lastResponse: { error: "heartbeat timeout" },
+        });
+        this.stateManager.upsertDevice({
+          ...latest,
+          status: "OFFLINE",
+          lastResponse: { error: "heartbeat timeout" },
         });
       }
     }
+  }
+
+  matchesExpectedResponse(code, expectedResponses = [100]) {
+    return expectedResponses.some((expected) => {
+      if (typeof expected === "number") {
+        return Number(code) === expected;
+      }
+
+      if (expected === "1##") {
+        return Number(code) >= 100 && Number(code) <= 199;
+      }
+
+      if (expected === "2##") {
+        return Number(code) >= 200 && Number(code) <= 299;
+      }
+
+      return false;
+    });
   }
 
   async executeStepCommand({ robotId, step, command }) {
@@ -126,12 +197,19 @@ class ConnectionService {
     const client = await this.getClient(device);
     await client.writeSingleRegister(command.address, command.value);
 
+    const responseAddress = Number(command.responseAddress ?? process.env.MODBUS_RESPONSE_REGISTER ?? 2);
+    const responseValues = await client.readHoldingRegisters(responseAddress, 1);
+    const responseCode = responseValues[0] ?? null;
+    const decoded = decodeResponse(responseCode);
+
     const stateValues = await client.readHoldingRegisters(command.verifyAddress, 1);
-    const stateOk = stateValues[0] === command.expectedValue;
+    const verifyOk = stateValues[0] === command.expectedValue;
+    const responseOk = this.matchesExpectedResponse(responseCode, command.expectedResponses || [100]);
+    const stateOk = verifyOk && responseOk;
 
     this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
       lastCommand: command,
-      lastResponse: { verifyValue: stateValues[0], stateOk },
+      lastResponse: { verifyValue: stateValues[0], responseCode, decoded, stateOk },
     });
 
     this.stateManager.upsertDevice({
@@ -139,13 +217,13 @@ class ConnectionService {
       status: "CONNECTED",
       lastSeen: Date.now(),
       lastCommand: command,
-      lastResponse: { verifyValue: stateValues[0], stateOk },
+      lastResponse: { verifyValue: stateValues[0], responseCode, decoded, stateOk },
     });
 
     return {
-      ack: "DONE",
+      ack: decoded.ok ? "DONE" : "ERROR",
       stateOk,
-      raw: { verifyValue: stateValues[0] },
+      raw: { verifyValue: stateValues[0], responseCode, decoded },
     };
   }
 }

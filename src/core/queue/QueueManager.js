@@ -3,6 +3,10 @@ class QueueManager {
     this.byRobot = new Map();
   }
 
+  clear() {
+    this.byRobot.clear();
+  }
+
   ensureRobot(robotId) {
     if (!this.byRobot.has(robotId)) {
       this.byRobot.set(robotId, { activeOrderId: null, items: [] });
@@ -14,6 +18,13 @@ class QueueManager {
   enqueue(order) {
     const state = this.ensureRobot(order.robotId);
     state.items.push(order.id);
+  }
+
+  restoreRobotQueue(robotId, queuedOrderIds = [], activeOrderId = null) {
+    this.byRobot.set(robotId, {
+      activeOrderId,
+      items: [...queuedOrderIds],
+    });
   }
 
   setActive(robotId, orderId) {

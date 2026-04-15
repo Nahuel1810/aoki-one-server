@@ -5,6 +5,15 @@ const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
 async function bootstrap() {
   const { app, services } = createApp();
 
+  const snapshot = services.snapshotStore.load();
+  if (snapshot) {
+    services.orchestrator.rehydrateFromSnapshot(snapshot);
+  }
+
+  if (typeof services.connectionService.startMonitoring === "function") {
+    services.connectionService.startMonitoring();
+  }
+
   await services.orchestrator.start();
 
   const httpServer = app.listen(HTTP_PORT, () => {
@@ -24,6 +33,10 @@ async function bootstrap() {
     await new Promise((resolve) => {
       httpServer.close(() => resolve());
     });
+
+    if (typeof services.connectionService.stopMonitoring === "function") {
+      services.connectionService.stopMonitoring();
+    }
 
     await services.orchestrator.stop();
     process.exit(0);
