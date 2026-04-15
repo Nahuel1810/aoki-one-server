@@ -1,6 +1,7 @@
 const { CARRO } = require("../../config/plcProtocol");
 const {
   parseLocationCode,
+  hasLocationActionSuffix,
   inferRobotIdFromEstanteria,
   toCarroCommand,
   toElevadorGoLevelCommand,
@@ -117,18 +118,24 @@ class OrchestratorService {
       throw new Error("type invalido. Usar PICK o PUT");
     }
 
-    const robotId = input.robotId || OrchestratorService.inferRobotId(input.locationCode);
+    if (hasLocationActionSuffix(input.locationCode)) {
+      throw new Error("locationCode no debe incluir accion final (T/D/L). La accion se deriva desde type PICK/PUT");
+    }
+
+    const parsedLocation = parseLocationCode(input.locationCode);
+
+    const robotId = input.robotId || parsedLocation.robotId || OrchestratorService.inferRobotId(parsedLocation.baseCode);
     if (!robotId) {
       throw new Error("No se pudo derivar robotId. Enviar robotId o locationCode valido");
     }
 
-    parseLocationCode(input.locationCode);
 
     const steps = this.buildSteps(type);
     const order = this.stateManager.createOrder({
       ...input,
       type,
       robotId,
+      locationCode: parsedLocation.baseCode,
       steps,
     });
 

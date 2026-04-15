@@ -78,6 +78,7 @@ Registro de dispositivo:
 
 ### Ordenes
 
+- `POST /api/orders/simulate`
 - `POST /api/orders`
 - `GET /api/orders`
 - `GET /api/orders/:id`
@@ -89,12 +90,18 @@ Alta de orden:
 ```json
 {
   "type": "PICK",
-  "locationCode": "30501",
+  "locationCode": "3X04A3",
   "targetLocation": "90001",
   "robotId": "3",
   "priority": 0
 }
 ```
+
+Regla de contrato MVP:
+
+- `type` define la accion (`PICK` o `PUT`).
+- `locationCode` debe venir sin letra final de accion.
+- Si llega con sufijo `T`, `D` o `L`, la API responde 400.
 
 ## Consideraciones de red
 

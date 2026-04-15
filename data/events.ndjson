@@ -15,3 +15,4 @@
 {"entityType":"STEP","entityId":"1630b04a-547e-4fa9-907f-b04ed064abd8:5","event":"STEP_DONE","metadata":{"robotId":"1","orderId":"1630b04a-547e-4fa9-907f-b04ed064abd8","step":"CARRO_DEJA"},"ts":1776259324720}
 {"entityType":"STEP","entityId":"1630b04a-547e-4fa9-907f-b04ed064abd8:6","event":"STEP_DONE","metadata":{"robotId":"1","orderId":"1630b04a-547e-4fa9-907f-b04ed064abd8","step":"HOMING"},"ts":1776259325023}
 {"entityType":"ORDER","entityId":"1630b04a-547e-4fa9-907f-b04ed064abd8","event":"ORDER_DONE","ts":1776259325336}
+{"entityType":"SYSTEM","entityId":"orchestrator","event":"SNAPSHOT_REHYDRATED","ts":1776264380777}

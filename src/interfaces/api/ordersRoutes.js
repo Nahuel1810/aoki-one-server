@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   parseLocationCode,
+  hasLocationActionSuffix,
   toCarroCommand,
   toElevadorGoLevelCommand,
 } = require("../../core/orchestrator/locationTranslator");
@@ -20,6 +21,10 @@ function createOrdersRoutes(services) {
         throw new Error("type invalido. Usar PICK o PUT");
       }
 
+      if (hasLocationActionSuffix(body.locationCode)) {
+        throw new Error("locationCode no debe incluir accion final (T/D/L). La accion se deriva desde type PICK/PUT");
+      }
+
       const parsed = parseLocationCode(body.locationCode);
       const robotId = String(body.robotId || parsed.robotId || "").trim();
       if (!robotId) {
@@ -30,7 +35,7 @@ function createOrdersRoutes(services) {
         id: "SIMULATION",
         type,
         robotId,
-        locationCode: parsed.raw,
+        locationCode: parsed.baseCode,
       };
 
       const steps = services.orchestrator.buildSteps(type);

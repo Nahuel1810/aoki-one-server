@@ -91,7 +91,7 @@ test("API simula traduccion de ubicacion sin crear orden", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "PICK",
-        locationCode: "3X04A3T",
+        locationCode: "3X04A3",
       }),
     });
 
@@ -111,6 +111,34 @@ test("API simula traduccion de ubicacion sin crear orden", async () => {
     assert.equal(listData.ok, true);
     assert.equal(Array.isArray(listData.data), true);
     assert.equal(listData.data.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test("API rechaza locationCode con accion final en alta de orden", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const orderRes = await fetch(toUrl(server, "/api/orders"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "PICK",
+        locationCode: "3X04A3T",
+      }),
+    });
+
+    const orderData = await orderRes.json();
+    assert.equal(orderRes.status, 400);
+    assert.equal(orderData.ok, false);
+    assert.match(orderData.error, /locationCode no debe incluir accion final/i);
   } finally {
     server.close();
   }

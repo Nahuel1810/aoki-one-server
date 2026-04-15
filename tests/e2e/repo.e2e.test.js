@@ -82,7 +82,7 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "PICK",
-        locationCode: "3X04A3T",
+        locationCode: "3X04A3",
       }),
     });
     const simulateData = await simulateRes.json();
@@ -97,7 +97,7 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "PICK",
-        locationCode: "3X04A3T",
+        locationCode: "3X04A3",
       }),
     });
     const createOrderData = await createOrderRes.json();

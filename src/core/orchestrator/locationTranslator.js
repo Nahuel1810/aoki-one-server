@@ -52,7 +52,7 @@ function inferRobotIdFromEstanteria(estanteriaCode, options = {}) {
 
 function parseLocationCode(input, options = {}) {
   const value = String(input || "").trim().toUpperCase();
-  const regex = /^(\d+X)(\d{2})([A-L])(\d)([TD])?$/;
+  const regex = /^(\d+X)(\d{2})([A-L])(\d)([TDL])?$/;
   const match = value.match(regex);
 
   if (!match) {
@@ -69,6 +69,7 @@ function parseLocationCode(input, options = {}) {
 
   return {
     raw: value,
+    baseCode: `${estanteriaCode}${moduleCode}${levelLetter}${position}`,
     estanteriaCode,
     robotId: inferRobotIdFromEstanteria(estanteriaCode, options),
     moduleCode,
@@ -81,6 +82,10 @@ function parseLocationCode(input, options = {}) {
     action,
     actionBit: action === null ? null : action === "T" ? 1 : 0,
   };
+}
+
+function hasLocationActionSuffix(input) {
+  return /[TDL]$/i.test(String(input || "").trim());
 }
 
 function toCarroCommand(location, actionOverride) {
@@ -115,6 +120,7 @@ function toElevadorGoLevelCommand(location) {
 
 module.exports = {
   parseLocationCode,
+  hasLocationActionSuffix,
   inferRobotIdFromEstanteria,
   levelToNumber,
   toCarroCommand,
