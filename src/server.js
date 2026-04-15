@@ -1,30 +1,31 @@
 const { createApp } = require("./app");
 
 const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
-const MQTT_PORT = Number(process.env.MQTT_PORT || 1883);
-const MQTT_HOST = process.env.MQTT_HOST || "0.0.0.0";
 
 async function bootstrap() {
-  const { app, plcMqtt } = await createApp({
-    mqttPort: MQTT_PORT,
-    mqttHost: MQTT_HOST,
-    endpointBasePath: "/api/plc",
-  });
+  const { app, services } = createApp();
 
-  await plcMqtt.start();
+  await services.orchestrator.start();
 
   const httpServer = app.listen(HTTP_PORT, () => {
     console.log(`[http] API escuchando en 0.0.0.0:${HTTP_PORT}`);
   });
 
+  let shuttingDown = false;
+
   async function shutdown(signal) {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
     console.log(`[shutdown] Senal recibida: ${signal}`);
 
     await new Promise((resolve) => {
       httpServer.close(() => resolve());
     });
 
-    await plcMqtt.stop();
+    await services.orchestrator.stop();
     process.exit(0);
   }
 

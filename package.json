@@ -1,7 +1,7 @@
 {
   "name": "aoki-one-server",
   "version": "1.0.0",
-  "description": "Servidor modular con broker MQTT para PLC",
+  "description": "Servidor modular para orquestacion de robots PLC por Modbus TCP",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
@@ -9,8 +9,8 @@
     "dev": "nodemon src/server.js"
   },
   "dependencies": {
-    "aedes": "^0.51.3",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "modbus-serial": "^8.0.23"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

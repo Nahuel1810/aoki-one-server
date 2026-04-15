@@ -1,40 +1,23 @@
-# Aoki One Server - PLC MQTT Module
+# Aoki One Server - MVP Modbus TCP
 
-Modulo Node.js para levantar un broker MQTT (puerto 1883 por defecto) y una API HTTP para publicar comandos a PLC en topicos estandarizados.
+Servidor Node.js para orquestar pedidos PICK/PUT sobre robots PLC (carro + elevador) usando Modbus TCP.
 
-## Topicos soportados
+## Estado actual del MVP
 
-Todos los dispositivos deben usar:
+- Sin MQTT ni Node-RED en el flujo principal.
+- Cola por robot (1 orden activa por robot).
+- Orquestador con secuencia fija de pasos:
+  - HOMING -> ELEVADOR -> CARRO_BUSCA -> ELEVADOR -> CARRO_DEJA/CARRO_DEVUELVE -> HOMING
+- Retry con backoff por paso.
+- Persistencia liviana en archivos:
+  - `data/events.ndjson`
+  - `data/snapshot.json`
+- Frontend basico en `/` para registrar dispositivos y crear pedidos.
 
-- `plc/{tipo}/{id}/cmd`
-- `plc/{tipo}/{id}/state`
+## Requisitos
 
-Ejemplos:
-
-- `plc/elevador/1/cmd`
-- `plc/carro/2/state`
-
-## Payloads
-
-Comando hacia PLC:
-
-```json
-{
-  "cmd": 12345,
-  "ts": 1710000000
-}
-```
-
-State enviado por PLC:
-
-```json
-{
-  "status": "idle",
-  "version": "1.0.0",
-  "ts": 1710000000,
-  "error": null
-}
-```
+- Node.js 18+
+- PLCs accesibles por red en Modbus TCP (puerto 502 por defecto)
 
 ## Instalacion
 
@@ -42,99 +25,85 @@ State enviado por PLC:
 npm install
 ```
 
+## Configuracion
+
+Crear `.env` desde `.env.example`:
+
+```bash
+HTTP_PORT=3000
+SIMULATE_PLC=true
+ORCHESTRATOR_TICK_MS=300
+MAX_RETRIES_PER_STEP=3
+BASE_BACKOFF_MS=500
+COMMAND_ACK_TIMEOUT_MS=2000
+MODBUS_COMMAND_REGISTER=0
+MODBUS_VERIFY_REGISTER=1
+```
+
+Notas:
+- `SIMULATE_PLC=true` permite probar el orquestador sin PLC real.
+- Para planta real, usar `SIMULATE_PLC=false` y registrar dispositivos con IP/puerto/unitId correctos.
+
 ## Ejecucion
 
 ```bash
 npm start
 ```
 
-## Frontend simple
+## API
 
-Con el servidor levantado, abrir:
+### Salud
 
-- http://localhost:3000/
+- `GET /health`
 
-La pagina permite completar:
+### Dispositivos PLC
 
-- Topico
-- Comando (campo cmd)
-- Timestamp (ts)
+- `POST /api/devices/register`
+- `GET /api/devices`
+- `GET /api/devices/robots`
 
-Al enviar, hace POST a:
-
-- /api/plc/publish
-
-Variables:
-
-- `HTTP_PORT` (default `3000`)
-- `MQTT_PORT` (default `1883`)
-- `MQTT_HOST` (default `0.0.0.0`)
-
-## Endpoints
-
-### POST /api/plc/:tipo/:id/cmd
-
-Publica un comando en `plc/{tipo}/{id}/cmd`.
-
-Body:
+Registro de dispositivo:
 
 ```json
 {
-  "cmd": 12345,
-  "ts": 1710000000
+  "robotId": "3",
+  "type": "CARRO",
+  "host": "192.168.1.50",
+  "port": 502,
+  "unitId": 1,
+  "heartbeatRegister": 0,
+  "timeoutMs": 2000
 }
 ```
 
-Ejemplo:
+### Ordenes
 
-```bash
-curl -X POST http://localhost:3000/api/plc/elevador/1/cmd \
-  -H "Content-Type: application/json" \
-  -d '{"cmd":12345,"ts":1710000000}'
-```
+- `POST /api/orders`
+- `GET /api/orders`
+- `GET /api/orders/:id`
+- `POST /api/orders/:id/retry`
+- `POST /api/orders/:id/cancel`
 
-### POST /api/plc/publish
-
-Publica payload arbitrario en un topico valido `plc/{tipo}/{id}/cmd|state`.
-
-Body:
+Alta de orden:
 
 ```json
 {
-  "topic": "plc/elevador/1/cmd",
-  "payload": {
-    "cmd": 12345,
-    "ts": 1710000000
-  },
-  "qos": 0,
-  "retain": false
+  "type": "PICK",
+  "locationCode": "30501",
+  "targetLocation": "90001",
+  "robotId": "3",
+  "priority": 0
 }
 ```
 
-### GET /api/plc/:tipo/:id/state
+## Consideraciones de red
 
-Devuelve el ultimo state recibido para `plc/{tipo}/{id}/state`.
+- Se asume latencia variable y microcortes en bridges WiFi.
+- Nunca avanzar de paso solo por enviar comando.
+- En cada paso: enviar -> esperar/timeout -> leer estado PLC -> validar esperado -> avanzar.
 
-## Acople en otro servidor
+## Proximo trabajo sugerido
 
-El modulo esta en `src/modules/plcMqttModule.js` y exporta `createPlcMqttModule(options)`.
-
-Uso base:
-
-```js
-const express = require("express");
-const { createPlcMqttModule } = require("./src/modules/plcMqttModule");
-
-async function main() {
-  const app = express();
-  app.use(express.json());
-
-  const plcMqtt = await createPlcMqttModule({ mqttPort: 1883 });
-  plcMqtt.attachHttpRoutes(app);
-  await plcMqtt.start();
-
-  app.listen(3000);
-}
-
-main();
-```
+1. Cerrar mapa Modbus exacto (registros por paso, ACK, error y bloqueo).
+2. Reemplazar `resolveStepCommand` por codificacion real por robot/dispositivo.
+3. Rehidratacion completa desde `snapshot.json` al arrancar servidor.
