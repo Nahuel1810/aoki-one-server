@@ -1,7 +1,75 @@
 const express = require("express");
+const {
+  parseLocationCode,
+  toCarroCommand,
+  toElevadorGoLevelCommand,
+} = require("../../core/orchestrator/locationTranslator");
 
 function createOrdersRoutes(services) {
   const router = express.Router();
+
+  router.post("/simulate", (req, res) => {
+    try {
+      const body = req.body || {};
+      const type = String(body.type || "PICK").toUpperCase();
+      if (!body.locationCode) {
+        throw new Error("locationCode es requerido");
+      }
+
+      if (!["PICK", "PUT"].includes(type)) {
+        throw new Error("type invalido. Usar PICK o PUT");
+      }
+
+      const parsed = parseLocationCode(body.locationCode);
+      const robotId = String(body.robotId || parsed.robotId || "").trim();
+      if (!robotId) {
+        throw new Error("No se pudo derivar robotId. Enviar robotId o locationCode valido");
+      }
+
+      const simulatedOrder = {
+        id: "SIMULATION",
+        type,
+        robotId,
+        locationCode: parsed.raw,
+      };
+
+      const steps = services.orchestrator.buildSteps(type);
+      const stepCommands = steps.map((step) => {
+        const payload = services.orchestrator.resolveStepCommand(step, simulatedOrder);
+        return {
+          stepId: step.id,
+          stepType: step.type,
+          deviceType: step.deviceType,
+          commandCode: payload.commandCode,
+          address: payload.address,
+          responseAddress: payload.responseAddress,
+          verifyAddress: payload.verifyAddress,
+          expectedResponses: payload.expectedResponses,
+          expectedValue: payload.expectedValue,
+        };
+      });
+
+      const carroBring = toCarroCommand(parsed, "T");
+      const carroReturn = toCarroCommand(parsed, "D");
+      const elevadorGoLevel = toElevadorGoLevelCommand(parsed);
+
+      res.json({
+        ok: true,
+        data: {
+          order: simulatedOrder,
+          location: parsed,
+          commandPreview: {
+            carroBring,
+            carroReturn,
+            elevadorGoLevel,
+          },
+          stepCommands,
+        },
+      });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
 
   router.post("/", (req, res) => {
     try {

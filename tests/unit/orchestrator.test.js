@@ -42,7 +42,7 @@ test("Orchestrator acepta connection service fake (desacople)", async () => {
   const order = orchestrator.submitOrder({
     type: "PICK",
     robotId: "1",
-    locationCode: "10501",
+    locationCode: "3X04A3",
   });
 
   const step = order.steps[0];
@@ -61,7 +61,7 @@ test("Orchestrator hace retry y luego completa", async () => {
   });
 
   const { orchestrator } = buildOrchestrator(fakeConnection);
-  const order = orchestrator.submitOrder({ type: "PICK", robotId: "2", locationCode: "20501" });
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "2", locationCode: "4X04A3" });
 
   const result = await orchestrator.executeStepWithRetry(order, order.steps[0]);
   assert.equal(result.ok, true);
@@ -77,7 +77,7 @@ test("Orchestrator marca error cuando agota retries", async () => {
   });
 
   const { orchestrator } = buildOrchestrator(fakeConnection, { maxRetries: 3 });
-  const order = orchestrator.submitOrder({ type: "PICK", robotId: "3", locationCode: "30501" });
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "3", locationCode: "5X04A3" });
 
   const result = await orchestrator.executeStepWithRetry(order, order.steps[0]);
   assert.equal(result.ok, false);

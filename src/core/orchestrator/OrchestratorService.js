@@ -1,4 +1,10 @@
-const { CARRO, buildElevadorIrNivel } = require("../../config/plcProtocol");
+const { CARRO } = require("../../config/plcProtocol");
+const {
+  parseLocationCode,
+  inferRobotIdFromEstanteria,
+  toCarroCommand,
+  toElevadorGoLevelCommand,
+} = require("./locationTranslator");
 
 class OrchestratorService {
   constructor(options) {
@@ -22,21 +28,13 @@ class OrchestratorService {
   }
 
   static inferRobotId(locationCode) {
-    const raw = String(locationCode || "").trim();
-    if (!raw) {
+    const raw = String(locationCode || "").trim().toUpperCase();
+    const match = raw.match(/^(\d+X)/);
+    if (!match) {
       return null;
     }
 
-    return raw.slice(0, 1);
-  }
-
-  static inferLevel(locationCode) {
-    const digits = String(locationCode || "").replace(/\D/g, "");
-    if (digits.length < 2) {
-      return 0;
-    }
-
-    return Number(digits.slice(1, 3));
+    return inferRobotIdFromEstanteria(match[1]);
   }
 
   buildSteps(orderType) {
@@ -57,16 +55,17 @@ class OrchestratorService {
   }
 
   resolveStepCommand(step, order) {
-    const locationNumber = Number(order.locationCode) || 0;
-    const targetNumber = Number(order.targetLocation) || locationNumber;
-    const level = OrchestratorService.inferLevel(order.locationCode);
+    const parsed = parseLocationCode(order.locationCode);
+    const carroBring = toCarroCommand(parsed, "T");
+    const carroReturn = toCarroCommand(parsed, "D");
+    const elevadorLevel = toElevadorGoLevelCommand(parsed);
 
     const commandCodes = {
       HOMING: CARRO.COMMANDS.INIT,
-      ELEVADOR: buildElevadorIrNivel(level),
-      CARRO_BUSCA: locationNumber,
-      CARRO_DEJA: targetNumber,
-      CARRO_DEVUELVE: targetNumber,
+      ELEVADOR: elevadorLevel.commandCode,
+      CARRO_BUSCA: carroBring.commandCode,
+      CARRO_DEJA: carroReturn.commandCode,
+      CARRO_DEVUELVE: carroReturn.commandCode,
     };
 
     return {
@@ -122,6 +121,8 @@ class OrchestratorService {
     if (!robotId) {
       throw new Error("No se pudo derivar robotId. Enviar robotId o locationCode valido");
     }
+
+    parseLocationCode(input.locationCode);
 
     const steps = this.buildSteps(type);
     const order = this.stateManager.createOrder({

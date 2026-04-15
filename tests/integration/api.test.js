@@ -58,7 +58,7 @@ test("API permite registrar dispositivo y crear orden", async () => {
       body: JSON.stringify({
         type: "PICK",
         robotId: "1",
-        locationCode: "10501",
+        locationCode: "3X04A3",
       }),
     });
 
@@ -71,6 +71,46 @@ test("API permite registrar dispositivo y crear orden", async () => {
     assert.equal(listData.ok, true);
     assert.ok(Array.isArray(listData.data));
     assert.equal(listData.data.length, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test("API simula traduccion de ubicacion sin crear orden", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const simulateRes = await fetch(toUrl(server, "/api/orders/simulate"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "PICK",
+        locationCode: "3X04A3T",
+      }),
+    });
+
+    const simulateData = await simulateRes.json();
+    assert.equal(simulateRes.status, 200);
+    assert.equal(simulateData.ok, true);
+    assert.equal(simulateData.data.order.robotId, "1");
+    assert.equal(simulateData.data.commandPreview.carroBring.commandCode, 30401);
+    assert.equal(simulateData.data.commandPreview.carroReturn.commandCode, 30400);
+    assert.equal(simulateData.data.commandPreview.elevadorGoLevel.commandCode, 101);
+    assert.equal(Array.isArray(simulateData.data.stepCommands), true);
+    assert.equal(simulateData.data.stepCommands.length > 0, true);
+
+    const listRes = await fetch(toUrl(server, "/api/orders"));
+    const listData = await listRes.json();
+    assert.equal(listRes.status, 200);
+    assert.equal(listData.ok, true);
+    assert.equal(Array.isArray(listData.data), true);
+    assert.equal(listData.data.length, 0);
   } finally {
     server.close();
   }

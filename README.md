@@ -85,6 +85,7 @@ Registro de dispositivo:
 ### Ordenes
 
 - `POST /api/orders`
+- `POST /api/orders/simulate`
 - `GET /api/orders`
 - `GET /api/orders/:id`
 - `POST /api/orders/:id/retry`
@@ -95,12 +96,23 @@ Alta de orden:
 ```json
 {
   "type": "PICK",
-  "locationCode": "30501",
+  "locationCode": "3X04A3T",
   "targetLocation": "90001",
   "robotId": "3",
   "priority": 0
 }
 ```
+
+Simulacion de traduccion de ubicacion (sin crear orden):
+
+```json
+{
+  "type": "PICK",
+  "locationCode": "3X04A3T"
+}
+```
+
+Respuesta esperada: preview de ubicacion parseada, robot derivado y comandos de carro/elevador por paso.
 
 ## Consideraciones de red
 
