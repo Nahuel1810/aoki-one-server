@@ -9,7 +9,6 @@ Servidor Node.js para orquestar pedidos PICK/PUT sobre robots PLC (carro + eleva
 - Orquestador con secuencia fija de pasos:
   - HOMING -> ELEVADOR -> CARRO_BUSCA -> ELEVADOR -> CARRO_DEJA/CARRO_DEVUELVE -> HOMING
 - Retry con backoff por paso.
-- Monitor de conexion por heartbeat/polling y reconexion automatica.
 - Persistencia liviana en archivos:
   - `data/events.ndjson`
   - `data/snapshot.json`
@@ -34,16 +33,11 @@ Crear `.env` desde `.env.example`:
 HTTP_PORT=3000
 SIMULATE_PLC=true
 ORCHESTRATOR_TICK_MS=300
-HEARTBEAT_INTERVAL_MS=1000
-HEARTBEAT_TIMEOUT_MS=3000
 MAX_RETRIES_PER_STEP=3
 BASE_BACKOFF_MS=500
 COMMAND_ACK_TIMEOUT_MS=2000
-MODBUS_RETRY_ATTEMPTS=3
-MODBUS_RETRY_BACKOFF_MS=300
 MODBUS_COMMAND_REGISTER=0
 MODBUS_VERIFY_REGISTER=1
-MODBUS_RESPONSE_REGISTER=2
 ```
 
 Notas:
@@ -85,7 +79,6 @@ Registro de dispositivo:
 ### Ordenes
 
 - `POST /api/orders`
-- `POST /api/orders/simulate`
 - `GET /api/orders`
 - `GET /api/orders/:id`
 - `POST /api/orders/:id/retry`
@@ -96,30 +89,18 @@ Alta de orden:
 ```json
 {
   "type": "PICK",
-  "locationCode": "3X04A3T",
+  "locationCode": "30501",
   "targetLocation": "90001",
   "robotId": "3",
   "priority": 0
 }
 ```
 
-Simulacion de traduccion de ubicacion (sin crear orden):
-
-```json
-{
-  "type": "PICK",
-  "locationCode": "3X04A3T"
-}
-```
-
-Respuesta esperada: preview de ubicacion parseada, robot derivado y comandos de carro/elevador por paso.
-
 ## Consideraciones de red
 
 - Se asume latencia variable y microcortes en bridges WiFi.
 - Nunca avanzar de paso solo por enviar comando.
 - En cada paso: enviar -> esperar/timeout -> leer estado PLC -> validar esperado -> avanzar.
-- Al iniciar, el servidor intenta rehidratar estado desde `data/snapshot.json`.
 
 ## Proximo trabajo sugerido
 

@@ -1,0 +1,475 @@
+{
+  "orders": [
+    {
+      "id": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "type": "PICK",
+      "status": "DONE",
+      "priority": 0,
+      "locationCode": "3X04A3T",
+      "targetLocation": null,
+      "currentStepIndex": 6,
+      "robotId": "1",
+      "errorReason": null,
+      "steps": [
+        {
+          "id": 1,
+          "type": "HOMING",
+          "deviceType": "CARRO",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259323495,
+          "finishedAt": 1776259323496
+        },
+        {
+          "id": 2,
+          "type": "ELEVADOR",
+          "deviceType": "ELEVADOR",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259323798,
+          "finishedAt": 1776259323799
+        },
+        {
+          "id": 3,
+          "type": "CARRO_BUSCA",
+          "deviceType": "CARRO",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259324102,
+          "finishedAt": 1776259324102
+        },
+        {
+          "id": 4,
+          "type": "ELEVADOR",
+          "deviceType": "ELEVADOR",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259324411,
+          "finishedAt": 1776259324411
+        },
+        {
+          "id": 5,
+          "type": "CARRO_DEJA",
+          "deviceType": "CARRO",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259324720,
+          "finishedAt": 1776259324720
+        },
+        {
+          "id": 6,
+          "type": "HOMING",
+          "deviceType": "CARRO",
+          "status": "DONE",
+          "retries": 0,
+          "startedAt": 1776259325022,
+          "finishedAt": 1776259325023
+        }
+      ],
+      "history": [
+        {
+          "ts": 1776258376153,
+          "event": "ORDER_CREATED"
+        },
+        {
+          "ts": 1776258376355,
+          "event": "ORDER_PAUSED_ERROR",
+          "metadata": {
+            "step": "HOMING",
+            "error": "No hay dispositivo CARRO para robot 1"
+          }
+        },
+        {
+          "ts": 1776259309703,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "HOMING",
+            "index": 0
+          }
+        },
+        {
+          "ts": 1776259310020,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "ELEVADOR",
+            "index": 1
+          }
+        },
+        {
+          "ts": 1776259310327,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "CARRO_BUSCA",
+            "index": 2
+          }
+        },
+        {
+          "ts": 1776259310636,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "ELEVADOR",
+            "index": 3
+          }
+        },
+        {
+          "ts": 1776259310938,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "CARRO_DEJA",
+            "index": 4
+          }
+        },
+        {
+          "ts": 1776259311251,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "HOMING",
+            "index": 5
+          }
+        },
+        {
+          "ts": 1776259311567,
+          "event": "ORDER_DONE",
+          "metadata": null
+        },
+        {
+          "ts": 1776259323496,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "HOMING",
+            "index": 0
+          }
+        },
+        {
+          "ts": 1776259323799,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "ELEVADOR",
+            "index": 1
+          }
+        },
+        {
+          "ts": 1776259324102,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "CARRO_BUSCA",
+            "index": 2
+          }
+        },
+        {
+          "ts": 1776259324411,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "ELEVADOR",
+            "index": 3
+          }
+        },
+        {
+          "ts": 1776259324720,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "CARRO_DEJA",
+            "index": 4
+          }
+        },
+        {
+          "ts": 1776259325023,
+          "event": "STEP_DONE",
+          "metadata": {
+            "step": "HOMING",
+            "index": 5
+          }
+        },
+        {
+          "ts": 1776259325336,
+          "event": "ORDER_DONE",
+          "metadata": null
+        }
+      ],
+      "createdAt": 1776258376153,
+      "updatedAt": 1776259325336
+    }
+  ],
+  "robots": [
+    {
+      "id": "1",
+      "status": "IDLE",
+      "currentOrderId": null,
+      "mode": "AUTO",
+      "enabled": true,
+      "lastHeartbeat": null,
+      "updatedAt": 1776259325336
+    }
+  ],
+  "devices": [
+    {
+      "id": "1:CARRO",
+      "status": "CONNECTED",
+      "lastSeen": 1776259325023,
+      "lastCommand": {
+        "commandCode": 40000,
+        "address": 0,
+        "value": 40000,
+        "responseAddress": 2,
+        "expectedResponses": [
+          100
+        ],
+        "verifyAddress": 1,
+        "expectedValue": 6
+      },
+      "lastResponse": {
+        "ack": "DONE",
+        "simulated": true,
+        "step": "HOMING"
+      },
+      "robotId": "1",
+      "type": "CARRO",
+      "host": "192.168.1.50",
+      "port": 502,
+      "unitId": 1,
+      "heartbeatRegister": 0,
+      "timeoutMs": 2000,
+      "updatedAt": 1776259325023
+    },
+    {
+      "id": "1:ELEVADOR",
+      "status": "CONNECTED",
+      "lastSeen": 1776259324411,
+      "lastCommand": {
+        "commandCode": 101,
+        "address": 0,
+        "value": 101,
+        "responseAddress": 2,
+        "expectedResponses": [
+          100
+        ],
+        "verifyAddress": 1,
+        "expectedValue": 4
+      },
+      "lastResponse": {
+        "ack": "DONE",
+        "simulated": true,
+        "step": "ELEVADOR"
+      },
+      "robotId": "1",
+      "type": "ELEVADOR",
+      "host": "192.168.1.51",
+      "port": 502,
+      "unitId": 1,
+      "heartbeatRegister": 0,
+      "timeoutMs": 2000,
+      "updatedAt": 1776259324411
+    }
+  ],
+  "commands": [
+    {
+      "id": "78715c56-83d7-4a21-879f-ec8f386628dc",
+      "status": "SENT",
+      "sentAt": 1776258376352,
+      "acknowledgedAt": null,
+      "finishedAt": null,
+      "rawResponse": null,
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 1,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 40000
+    },
+    {
+      "id": "f7d11067-52f4-4cfa-8078-e115e8c4d71f",
+      "status": "DONE",
+      "sentAt": 1776259309702,
+      "acknowledgedAt": 1776259309703,
+      "finishedAt": 1776259309703,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 1,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 40000
+    },
+    {
+      "id": "409f242a-8459-4d02-86d6-7c43318cd1ae",
+      "status": "DONE",
+      "sentAt": 1776259310020,
+      "acknowledgedAt": 1776259310020,
+      "finishedAt": 1776259310020,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 2,
+      "robotId": "1",
+      "deviceId": "1:ELEVADOR",
+      "commandCode": 101
+    },
+    {
+      "id": "766176f4-645c-4992-9154-3b032b10b914",
+      "status": "DONE",
+      "sentAt": 1776259310326,
+      "acknowledgedAt": 1776259310326,
+      "finishedAt": 1776259310326,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 3,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 30401
+    },
+    {
+      "id": "1cb6807e-3b58-40a8-b7c9-34bea2a7bc8a",
+      "status": "DONE",
+      "sentAt": 1776259310636,
+      "acknowledgedAt": 1776259310636,
+      "finishedAt": 1776259310636,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 4,
+      "robotId": "1",
+      "deviceId": "1:ELEVADOR",
+      "commandCode": 101
+    },
+    {
+      "id": "b341180a-5f1c-45ad-a16f-19dfb46a6115",
+      "status": "DONE",
+      "sentAt": 1776259310938,
+      "acknowledgedAt": 1776259310938,
+      "finishedAt": 1776259310938,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 5,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 30400
+    },
+    {
+      "id": "207f006d-ac8c-42c7-a656-37c6899ad6f3",
+      "status": "DONE",
+      "sentAt": 1776259311251,
+      "acknowledgedAt": 1776259311251,
+      "finishedAt": 1776259311251,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 6,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 40000
+    },
+    {
+      "id": "231101c2-4f36-420e-ad5e-0d1b5b515489",
+      "status": "DONE",
+      "sentAt": 1776259323495,
+      "acknowledgedAt": 1776259323496,
+      "finishedAt": 1776259323496,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 1,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 40000
+    },
+    {
+      "id": "0a69d767-6235-4a22-adf6-aef7a5de4775",
+      "status": "DONE",
+      "sentAt": 1776259323799,
+      "acknowledgedAt": 1776259323799,
+      "finishedAt": 1776259323799,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 2,
+      "robotId": "1",
+      "deviceId": "1:ELEVADOR",
+      "commandCode": 101
+    },
+    {
+      "id": "5136d2f6-17da-4710-b540-3b3c1475539d",
+      "status": "DONE",
+      "sentAt": 1776259324102,
+      "acknowledgedAt": 1776259324102,
+      "finishedAt": 1776259324102,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 3,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 30401
+    },
+    {
+      "id": "872f006b-e8c5-4d56-95dc-6568d5f836f6",
+      "status": "DONE",
+      "sentAt": 1776259324411,
+      "acknowledgedAt": 1776259324411,
+      "finishedAt": 1776259324411,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 4,
+      "robotId": "1",
+      "deviceId": "1:ELEVADOR",
+      "commandCode": 101
+    },
+    {
+      "id": "b8b6f666-8325-4b80-aefc-e3986b0c2534",
+      "status": "DONE",
+      "sentAt": 1776259324720,
+      "acknowledgedAt": 1776259324720,
+      "finishedAt": 1776259324720,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 5,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 30400
+    },
+    {
+      "id": "e958b2c7-4361-4b74-99fa-6ea08721e98e",
+      "status": "DONE",
+      "sentAt": 1776259325023,
+      "acknowledgedAt": 1776259325023,
+      "finishedAt": 1776259325023,
+      "rawResponse": {
+        "simulated": true
+      },
+      "orderId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "stepId": 6,
+      "robotId": "1",
+      "deviceId": "1:CARRO",
+      "commandCode": 40000
+    }
+  ],
+  "errors": [
+    {
+      "id": "126d7602-c51f-4d46-98d7-d82666cfc196",
+      "timestamp": 1776258376353,
+      "severity": "ERROR",
+      "entityType": "ORDER",
+      "entityId": "1630b04a-547e-4fa9-907f-b04ed064abd8",
+      "message": "No hay dispositivo CARRO para robot 1",
+      "metadata": {
+        "robotId": "1",
+        "step": "HOMING",
+        "attempt": 1
+      }
+    }
+  ],
+  "snapshotAt": 1776259325336
+}
