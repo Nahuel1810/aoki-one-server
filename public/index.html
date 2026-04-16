@@ -2,197 +2,866 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aoki One MVP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aoki One | Gestión de Robots</title>
     <style>
+      @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+
       :root {
-        --bg: #f5f7f2;
-        --panel: #ffffff;
-        --ink: #17211a;
-        --muted: #5b6a5f;
-        --accent: #2f6f44;
-        --danger: #b42318;
-        --ok: #047857;
-        --border: #d6dfd3;
+        --bg: #f3f7f0;
+        --ink: #142015;
+        --muted: #4f6453;
+        --panel: #fdfefc;
+        --panel-strong: #ffffff;
+        --border: #d6dfd4;
+        --line: #c4d3c3;
+        --accent: #146f47;
+        --accent-2: #1e8b59;
+        --danger: #b9372e;
+        --warn: #b37a1f;
+        --ok: #12734a;
+        --shadow: 0 14px 36px rgba(20, 30, 20, 0.12);
       }
 
-      * { box-sizing: border-box; }
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         margin: 0;
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         color: var(--ink);
-        background: radial-gradient(1000px 500px at -10% -20%, #ffffff 0%, #f7faf6 55%, #f1f5ef 100%);
+        font-family: "Manrope", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(1000px 500px at 0% -5%, #edf7ed 0%, rgba(237, 247, 237, 0) 65%),
+          radial-gradient(800px 500px at 110% 0%, #f3f0e6 0%, rgba(243, 240, 230, 0) 60%),
+          linear-gradient(150deg, #edf4eb 0%, #f5f8f3 40%, #eef5ee 100%);
       }
 
-      .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 40px; }
-      .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
-      .card {
-        background: var(--panel);
+      .shell {
+        width: min(1260px, 96vw);
+        margin: 18px auto 32px;
+      }
+
+      .hero {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: linear-gradient(120deg, rgba(255, 255, 255, 0.95), rgba(246, 251, 245, 0.95));
+        padding: 22px;
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -90px;
+        top: -80px;
+        width: 320px;
+        height: 320px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(20, 111, 71, 0.15) 0%, rgba(20, 111, 71, 0) 70%);
+        pointer-events: none;
+      }
+
+      .hero-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      .title {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: clamp(26px, 3.2vw, 40px);
+        line-height: 1.1;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        max-width: 760px;
+      }
+
+      .kpi-row {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .kpi {
         border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 16px;
+        border-radius: 16px;
+        background: var(--panel-strong);
+        padding: 14px;
       }
 
-      h1 { margin: 0 0 8px; }
-      h2 { margin: 0 0 12px; font-size: 17px; }
-      p { margin: 0 0 14px; color: var(--muted); }
+      .kpi-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
 
-      label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px; }
-      input, select, button {
-        width: 100%;
+      .kpi-value {
+        margin-top: 6px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+      }
+
+      .tabs {
+        margin-top: 18px;
+        display: flex;
+        gap: 8px;
+      }
+
+      .tab {
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        font: inherit;
-      }
-
-      button {
-        background: var(--accent);
-        color: #fff;
-        border: 0;
+        border-radius: 999px;
+        background: #fff;
+        color: var(--ink);
         font-weight: 700;
+        padding: 10px 14px;
         cursor: pointer;
       }
 
-      .status { margin-top: 10px; font-size: 14px; }
-      .status.ok { color: var(--ok); }
-      .status.err { color: var(--danger); }
-
-      .mono {
-        margin: 0;
-        padding: 12px;
-        border-radius: 10px;
-        background: #111827;
-        color: #cbd5e1;
-        overflow: auto;
-        max-height: 360px;
-        font-family: Consolas, monospace;
-        font-size: 12px;
+      .tab.active {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #fff;
+        border-color: transparent;
       }
 
-      @media (max-width: 860px) {
-        .grid { grid-template-columns: 1fr; }
+      .view {
+        margin-top: 18px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .grid-devices {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 14px;
+      }
+
+      .grid-orders {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 14px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--panel-strong);
+        padding: 16px;
+      }
+
+      .card h2 {
+        margin: 0 0 6px;
+        font-size: 18px;
+      }
+
+      .card p {
+        margin: 0 0 12px;
+        color: var(--muted);
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .status-ok { background: #e6f7ee; color: var(--ok); }
+      .status-warn { background: #fff4e1; color: var(--warn); }
+      .status-err { background: #fdeceb; color: var(--danger); }
+      .status-muted { background: #eef2ee; color: #4f5d50; }
+
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .controls-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .field label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      input,
+      select,
+      button {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        padding: 10px 11px;
+        background: #fff;
+        font: inherit;
+      }
+
+      input:focus,
+      select:focus,
+      button:focus {
+        outline: 2px solid rgba(20, 111, 71, 0.35);
+        outline-offset: 1px;
+      }
+
+      button {
+        border: 0;
+        cursor: pointer;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #fff;
+      }
+
+      button.ghost {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--ink);
+      }
+
+      button.danger {
+        background: linear-gradient(135deg, #b9372e, #cd544d);
+      }
+
+      .status-line {
+        min-height: 20px;
+        margin-top: 10px;
+        font-size: 13px;
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+        max-height: 460px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .robot-item,
+      .order-item,
+      .slot-item {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #fff;
+        padding: 12px;
+      }
+
+      .robot-top,
+      .order-top,
+      .slot-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .order-item.active {
+        border-color: #3aa56f;
+        box-shadow: 0 0 0 2px rgba(58, 165, 111, 0.15);
+      }
+
+      .order-meta,
+      .slot-meta,
+      .device-meta {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .actions {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+      }
+
+      .actions button {
+        padding: 8px;
+      }
+
+      .actions button.ghost,
+      .actions button.danger {
+        font-size: 13px;
+      }
+
+      .slot-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .fade-in {
+        animation: fadeIn 320ms ease;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (max-width: 1050px) {
+        .kpi-row,
+        .controls-3 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .grid-devices,
+        .grid-orders {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .shell { width: 95vw; }
+        .kpi-row,
+        .controls,
+        .controls-3,
+        .slot-grid {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
-    <main class="wrap">
-      <h1>Aoki One MVP</h1>
-      <p>Orquestador de pedidos PICK/PUT con cola por robot, sin MQTT.</p>
+    <main class="shell fade-in">
+      <section class="hero">
+        <div class="hero-top">
+          <div>
+            <h1 class="title">Centro de Gestión de Robots</h1>
+            <p class="subtitle">
+              Operación diaria de dispositivos y pedidos por estantería. Interfaz pensada para
+              logística, sin necesidad de conocimientos técnicos.
+            </p>
+          </div>
+          <span id="syncBadge" class="status-pill status-muted">Sincronizando...</span>
+        </div>
 
-      <section class="grid">
-        <article class="card">
-          <h2>Registrar dispositivo PLC</h2>
-          <form id="deviceForm">
-            <label>Robot ID</label>
-            <input id="robotId" value="1" required />
-            <label>Tipo</label>
-            <select id="deviceType">
-              <option value="CARRO">CARRO</option>
-              <option value="ELEVADOR">ELEVADOR</option>
-            </select>
-            <label>IP PLC</label>
-            <input id="host" value="192.168.1.50" />
-            <label>Puerto</label>
-            <input id="port" type="number" value="502" />
-            <button type="submit">Registrar dispositivo</button>
-          </form>
-          <div id="deviceStatus" class="status"></div>
-        </article>
+        <div class="kpi-row">
+          <article class="kpi">
+            <div class="kpi-label">Robots conectados</div>
+            <div id="kpiRobots" class="kpi-value">0</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Pedidos en curso</div>
+            <div id="kpiInProgress" class="kpi-value">0</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Pedidos en cola</div>
+            <div id="kpiPending" class="kpi-value">0</div>
+          </article>
+          <article class="kpi">
+            <div class="kpi-label">Slots ocupados</div>
+            <div id="kpiSlots" class="kpi-value">0</div>
+          </article>
+        </div>
 
-        <article class="card">
-          <h2>Crear pedido</h2>
-          <form id="orderForm">
-            <label>Tipo</label>
-            <select id="orderType">
-              <option value="PICK">PICK</option>
-              <option value="PUT">PUT</option>
-            </select>
-            <label>Location Code</label>
-            <input id="locationCode" value="30501" required />
-            <label>Target Location (opcional)</label>
-            <input id="targetLocation" placeholder="Ej: 90001" />
-            <label>Robot ID (opcional)</label>
-            <input id="orderRobotId" placeholder="Ej: 3" />
-            <button type="submit">Encolar pedido</button>
-          </form>
-          <div id="orderStatus" class="status"></div>
-        </article>
+        <div class="tabs" role="tablist" aria-label="Secciones">
+          <button class="tab active" id="tabDevices" data-target="devicesView" type="button">Gestión de dispositivos</button>
+          <button class="tab" id="tabOrders" data-target="ordersView" type="button">Gestión de pedidos</button>
+        </div>
       </section>
 
-      <section class="card" style="margin-top:16px;">
-        <h2>Estado del sistema</h2>
-        <pre id="stateBox" class="mono">Cargando...</pre>
+      <section class="view" id="devicesView">
+        <div class="grid-devices">
+          <article class="card">
+            <h2>Robots y estado de conexión</h2>
+            <p>Monitoreo rápido de cada robot, sus dispositivos y estado operativo.</p>
+            <div id="robotsList" class="list"></div>
+          </article>
+
+          <article class="stack">
+            <div class="card">
+              <h2>Configurar nuevo dispositivo</h2>
+              <p>Asociar IP/puerto al robot para habilitar comandos.</p>
+              <form id="deviceForm">
+                <div class="controls-3">
+                  <div class="field">
+                    <label for="robotId">Robot</label>
+                    <input id="robotId" required placeholder="Ej: 3" />
+                  </div>
+                  <div class="field">
+                    <label for="deviceType">Dispositivo</label>
+                    <select id="deviceType">
+                      <option value="CARRO">Carro</option>
+                      <option value="ELEVADOR">Elevador</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="port">Puerto</label>
+                    <input id="port" type="number" value="502" min="1" />
+                  </div>
+                </div>
+                <div class="field" style="margin-top: 10px;">
+                  <label for="host">IP PLC</label>
+                  <input id="host" placeholder="Ej: 192.168.1.50" required />
+                </div>
+                <div style="margin-top: 12px;">
+                  <button type="submit">Registrar dispositivo</button>
+                </div>
+              </form>
+              <div id="deviceStatus" class="status-line"></div>
+            </div>
+
+            <div class="card">
+              <h2>Inventario de dispositivos</h2>
+              <p>Listado completo para validación de red y asignaciones.</p>
+              <div id="devicesList" class="list"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view hidden" id="ordersView">
+        <div class="grid-orders">
+          <article class="stack">
+            <div class="card">
+              <h2>Filtros de operación</h2>
+              <p>Elegí una estantería y un robot para enfocarte en una sola operación.</p>
+              <div class="controls">
+                <div class="field">
+                  <label for="filterEstanteria">Estantería</label>
+                  <select id="filterEstanteria"></select>
+                </div>
+                <div class="field">
+                  <label for="filterRobot">Robot</label>
+                  <select id="filterRobot"></select>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>Próximos pedidos</h2>
+              <p>Cola de pedidos del robot/estantería seleccionados. El pedido en curso se destaca.</p>
+              <div id="ordersList" class="list"></div>
+            </div>
+          </article>
+
+          <article class="stack">
+            <div class="card">
+              <h2>Crear pedido manual</h2>
+              <p>Alta de pedido para el flujo operativo del robot seleccionado.</p>
+              <form id="orderForm">
+                <div class="controls-3">
+                  <div class="field">
+                    <label for="orderType">Tipo</label>
+                    <select id="orderType">
+                      <option value="PICK">PICK (traer cajón)</option>
+                      <option value="PUT">PUT (devolver cajón)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="orderRobotId">Robot</label>
+                    <input id="orderRobotId" placeholder="Ej: 3" />
+                  </div>
+                  <div class="field">
+                    <label for="targetLocation">Destino (PUT)</label>
+                    <input id="targetLocation" placeholder="Ej: 3X02AE1" />
+                  </div>
+                </div>
+                <div class="field" style="margin-top: 10px;">
+                  <label for="locationCode">Código de ubicación</label>
+                  <input id="locationCode" required placeholder="Ej: 3X02AE2" />
+                </div>
+                <div style="margin-top: 12px;">
+                  <button type="submit">Encolar pedido</button>
+                </div>
+              </form>
+              <div id="orderStatus" class="status-line"></div>
+            </div>
+
+            <div class="card">
+              <h2>Cajones en slots de pickeo</h2>
+              <p>Visualizá qué cajones ya fueron traídos y devolvelos con un clic.</p>
+              <div id="slotsBoard" class="slot-grid"></div>
+            </div>
+          </article>
+        </div>
       </section>
     </main>
 
     <script>
-      const stateBox = document.getElementById("stateBox");
+      const POLL_MS = 1600;
+      const appState = {
+        robots: [],
+        devices: [],
+        orders: [],
+        slots: [],
+        filter: {
+          estanteria: "ALL",
+          robotId: "ALL",
+        },
+      };
+
+      const syncBadge = document.getElementById("syncBadge");
       const deviceStatus = document.getElementById("deviceStatus");
       const orderStatus = document.getElementById("orderStatus");
 
-      function setStatus(el, ok, message) {
-        el.className = `status ${ok ? "ok" : "err"}`;
-        el.textContent = message;
+      function statusClassByRobot(robot) {
+        if (robot.status === "ERROR") return "status-err";
+        if (robot.status === "BUSY") return "status-warn";
+        return "status-ok";
       }
 
-      async function refreshState() {
+      function slotStatusClass(status) {
+        if (status === "OCCUPIED") return "status-ok";
+        if (status === "BLOCKED") return "status-err";
+        if (status === "PICK_IN_PROGRESS" || status === "PUT_IN_PROGRESS" || status === "RESERVED") return "status-warn";
+        return "status-muted";
+      }
+
+      function orderStatusClass(status) {
+        if (status === "ERROR" || status === "CANCELED") return "status-err";
+        if (status === "IN_PROGRESS") return "status-warn";
+        if (status === "DONE") return "status-ok";
+        return "status-muted";
+      }
+
+      function asSafe(text) {
+        return String(text ?? "").replace(/[&<>"']/g, (char) => {
+          const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+          return map[char] || char;
+        });
+      }
+
+      function showStatus(target, ok, message) {
+        target.textContent = message;
+        target.style.color = ok ? "var(--ok)" : "var(--danger)";
+      }
+
+      function estanteriaFromCode(code) {
+        const raw = String(code || "").trim().toUpperCase();
+        const match = raw.match(/^(\d+X\d{2})/);
+        return match ? match[1] : "SIN_EST";
+      }
+
+      function timeAgo(ts) {
+        if (!ts) return "sin dato";
+        const seconds = Math.max(0, Math.floor((Date.now() - Number(ts)) / 1000));
+        if (seconds < 60) return `${seconds}s`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m`;
+        return `${Math.floor(minutes / 60)}h`;
+      }
+
+      function bindTabs() {
+        const tabs = Array.from(document.querySelectorAll(".tab"));
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", () => {
+            tabs.forEach((other) => other.classList.remove("active"));
+            tab.classList.add("active");
+
+            const target = tab.dataset.target;
+            document.getElementById("devicesView").classList.toggle("hidden", target !== "devicesView");
+            document.getElementById("ordersView").classList.toggle("hidden", target !== "ordersView");
+          });
+        });
+      }
+
+      async function apiJson(url, options) {
+        const res = await fetch(url, options);
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `Error ${res.status}`);
+        }
+        return data.data;
+      }
+
+      async function refreshAll() {
+        syncBadge.textContent = "Sincronizando...";
+        syncBadge.className = "status-pill status-muted";
+
         try {
-          const [robotsRes, ordersRes, devicesRes] = await Promise.all([
-            fetch("/api/devices/robots"),
-            fetch("/api/orders"),
-            fetch("/api/devices"),
+          const [robots, devices, orders, slots] = await Promise.all([
+            apiJson("/api/devices/robots"),
+            apiJson("/api/devices"),
+            apiJson("/api/orders"),
+            apiJson("/api/slots"),
           ]);
 
-          const robotsData = await robotsRes.json();
-          const ordersData = await ordersRes.json();
-          const devicesData = await devicesRes.json();
+          appState.robots = Array.isArray(robots) ? robots : [];
+          appState.devices = Array.isArray(devices) ? devices : [];
+          appState.orders = Array.isArray(orders) ? orders : [];
+          appState.slots = Array.isArray(slots) ? slots : [];
 
-          stateBox.textContent = JSON.stringify(
-            {
-              robots: robotsData.data || [],
-              orders: ordersData.data || [],
-              devices: devicesData.data || [],
-              ts: Date.now(),
-            },
-            null,
-            2
-          );
+          renderKpis();
+          renderFilters();
+          renderRobots();
+          renderDevices();
+          renderOrders();
+          renderSlots();
+
+          syncBadge.textContent = "En línea";
+          syncBadge.className = "status-pill status-ok";
         } catch (error) {
-          stateBox.textContent = `Error consultando estado: ${error.message}`;
+          syncBadge.textContent = "Sin conexión";
+          syncBadge.className = "status-pill status-err";
+          showStatus(orderStatus, false, `No se pudo actualizar: ${error.message}`);
         }
       }
 
-      document.getElementById("deviceForm").addEventListener("submit", async (event) => {
+      function renderKpis() {
+        const connectedRobots = appState.robots.filter((robot) => robot.devices.some((d) => d.status === "CONNECTED"));
+        const inProgress = appState.orders.filter((order) => order.status === "IN_PROGRESS");
+        const pending = appState.orders.filter((order) => order.status === "PENDING");
+        const occupiedSlots = appState.slots.filter((slot) => slot.status === "OCCUPIED");
+
+        document.getElementById("kpiRobots").textContent = String(connectedRobots.length);
+        document.getElementById("kpiInProgress").textContent = String(inProgress.length);
+        document.getElementById("kpiPending").textContent = String(pending.length);
+        document.getElementById("kpiSlots").textContent = String(occupiedSlots.length);
+      }
+
+      function renderRobots() {
+        const root = document.getElementById("robotsList");
+        if (appState.robots.length === 0) {
+          root.innerHTML = '<div class="robot-item">Todavía no hay robots registrados.</div>';
+          return;
+        }
+
+        root.innerHTML = appState.robots
+          .map((robot) => {
+            const devices = robot.devices || [];
+            const connected = devices.filter((d) => d.status === "CONNECTED").length;
+            const total = devices.length;
+            return `
+              <article class="robot-item">
+                <div class="robot-top">
+                  <strong>Robot ${asSafe(robot.id)}</strong>
+                  <span class="status-pill ${statusClassByRobot(robot)}">${asSafe(robot.status || "IDLE")}</span>
+                </div>
+                <div class="device-meta">
+                  <div>Pedido actual: ${asSafe(robot.currentOrderId || "Sin pedido activo")}</div>
+                  <div>Dispositivos conectados: ${connected}/${total}</div>
+                  <div>Actualizado: hace ${timeAgo(robot.updatedAt)}</div>
+                </div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function renderDevices() {
+        const root = document.getElementById("devicesList");
+        if (appState.devices.length === 0) {
+          root.innerHTML = '<div class="robot-item">No hay dispositivos cargados aún.</div>';
+          return;
+        }
+
+        root.innerHTML = appState.devices
+          .map((device) => {
+            const connected = device.status === "CONNECTED";
+            return `
+              <article class="robot-item">
+                <div class="robot-top">
+                  <strong>${asSafe(device.type)} | Robot ${asSafe(device.robotId)}</strong>
+                  <span class="status-pill ${connected ? "status-ok" : "status-err"}">${asSafe(device.status || "DISCONNECTED")}</span>
+                </div>
+                <div class="device-meta">
+                  <div>IP: ${asSafe(device.host || "sin asignar")}:${asSafe(device.port || "-")}</div>
+                  <div>Último comando: ${asSafe(device.lastCommand || "sin comando")}</div>
+                </div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function availableEstanterias() {
+        const codes = new Set();
+        for (const order of appState.orders) {
+          codes.add(estanteriaFromCode(order.locationCode));
+        }
+        for (const slot of appState.slots) {
+          codes.add(estanteriaFromCode(slot.locationCode));
+          if (slot.currentBox && slot.currentBox.sourceLocationCode) {
+            codes.add(estanteriaFromCode(slot.currentBox.sourceLocationCode));
+          }
+        }
+        return ["ALL", ...Array.from(codes).filter((x) => x && x !== "SIN_EST").sort()];
+      }
+
+      function renderFilters() {
+        const robotSelect = document.getElementById("filterRobot");
+        const estSelect = document.getElementById("filterEstanteria");
+        const robots = ["ALL", ...new Set(appState.robots.map((r) => String(r.id)))];
+        const ests = availableEstanterias();
+
+        const prevRobot = appState.filter.robotId;
+        const prevEst = appState.filter.estanteria;
+
+        robotSelect.innerHTML = robots.map((id) => `<option value="${asSafe(id)}">${id === "ALL" ? "Todos los robots" : `Robot ${asSafe(id)}`}</option>`).join("");
+        estSelect.innerHTML = ests.map((est) => `<option value="${asSafe(est)}">${est === "ALL" ? "Todas las estanterías" : `Estantería ${asSafe(est)}`}</option>`).join("");
+
+        if (robots.includes(prevRobot)) {
+          robotSelect.value = prevRobot;
+        } else {
+          appState.filter.robotId = "ALL";
+        }
+
+        if (ests.includes(prevEst)) {
+          estSelect.value = prevEst;
+        } else {
+          appState.filter.estanteria = "ALL";
+        }
+      }
+
+      function filteredOrders() {
+        return appState.orders.filter((order) => {
+          if (appState.filter.robotId !== "ALL" && String(order.robotId) !== String(appState.filter.robotId)) {
+            return false;
+          }
+
+          if (appState.filter.estanteria !== "ALL") {
+            const orderEst = estanteriaFromCode(order.locationCode);
+            if (orderEst !== appState.filter.estanteria) {
+              return false;
+            }
+          }
+
+          return true;
+        });
+      }
+
+      function renderOrders() {
+        const root = document.getElementById("ordersList");
+        const list = filteredOrders();
+        const operational = list
+          .filter((order) => ["PENDING", "IN_PROGRESS", "ERROR"].includes(order.status))
+          .sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+
+        if (operational.length === 0) {
+          root.innerHTML = '<div class="order-item">No hay pedidos para los filtros seleccionados.</div>';
+          return;
+        }
+
+        root.innerHTML = operational
+          .map((order) => {
+            const isActive = order.status === "IN_PROGRESS";
+            return `
+              <article class="order-item ${isActive ? "active" : ""}">
+                <div class="order-top">
+                  <strong>${asSafe(order.type)} | ${asSafe(order.locationCode)}</strong>
+                  <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(order.status)}</span>
+                </div>
+                <div class="order-meta">
+                  <div>Robot: ${asSafe(order.robotId || "sin asignar")}</div>
+                  <div>Estantería: ${asSafe(estanteriaFromCode(order.locationCode))}</div>
+                  <div>Paso: ${Number(order.currentStepIndex || 0) + 1} / ${Array.isArray(order.steps) ? order.steps.length : 0}</div>
+                  <div>Creado: hace ${timeAgo(order.createdAt)}</div>
+                </div>
+                <div class="actions">
+                  <button class="ghost" type="button" data-action="retry" data-id="${asSafe(order.id)}">Reintentar</button>
+                  <button class="danger" type="button" data-action="cancel" data-id="${asSafe(order.id)}">Cancelar</button>
+                </div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function filteredSlots() {
+        return appState.slots.filter((slot) => {
+          if (appState.filter.estanteria !== "ALL") {
+            const fromBox = slot.currentBox && slot.currentBox.sourceLocationCode
+              ? estanteriaFromCode(slot.currentBox.sourceLocationCode)
+              : estanteriaFromCode(slot.locationCode);
+            if (fromBox !== appState.filter.estanteria) {
+              return false;
+            }
+          }
+          return true;
+        });
+      }
+
+      function renderSlots() {
+        const root = document.getElementById("slotsBoard");
+        const slots = filteredSlots();
+        if (slots.length === 0) {
+          root.innerHTML = '<div class="slot-item">No hay slots para mostrar.</div>';
+          return;
+        }
+
+        root.innerHTML = slots
+          .map((slot) => {
+            const canReturn = slot.status === "OCCUPIED" && slot.currentBox && slot.currentBox.sourceLocationCode;
+            return `
+              <article class="slot-item">
+                <div class="slot-top">
+                  <strong>${asSafe(slot.locationCode)}</strong>
+                  <span class="status-pill ${slotStatusClass(slot.status)}">${asSafe(slot.status)}</span>
+                </div>
+                <div class="slot-meta">
+                  <div>Cajón actual: ${asSafe(slot.currentBox ? slot.currentBox.id : "sin cajón")}</div>
+                  <div>Origen: ${asSafe(slot.currentBox && slot.currentBox.sourceLocationCode ? slot.currentBox.sourceLocationCode : "-")}</div>
+                </div>
+                <div class="actions">
+                  <button
+                    type="button"
+                    data-action="return-box"
+                    data-slot="${asSafe(slot.locationCode)}"
+                    data-target="${asSafe(slot.currentBox && slot.currentBox.sourceLocationCode ? slot.currentBox.sourceLocationCode : "")}"
+                    class="${canReturn ? "" : "ghost"}"
+                    ${canReturn ? "" : "disabled"}
+                  >
+                    Devolver cajón
+                  </button>
+                  <button type="button" class="ghost" data-action="release-slot" data-slot="${asSafe(slot.locationCode)}">Liberar slot</button>
+                </div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      async function registerDevice(event) {
         event.preventDefault();
         try {
           const payload = {
             robotId: document.getElementById("robotId").value.trim(),
             type: document.getElementById("deviceType").value,
             host: document.getElementById("host").value.trim(),
-            port: Number(document.getElementById("port").value),
+            port: Number(document.getElementById("port").value || 502),
           };
 
-          const res = await fetch("/api/devices/register", {
+          await apiJson("/api/devices/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
 
-          const data = await res.json();
-          if (!res.ok || data.ok === false) {
-            setStatus(deviceStatus, false, data.error || "No se pudo registrar");
-            return;
-          }
-
-          setStatus(deviceStatus, true, "Dispositivo registrado");
-          await refreshState();
+          showStatus(deviceStatus, true, `Dispositivo ${payload.type} registrado para robot ${payload.robotId}.`);
+          event.target.reset();
+          document.getElementById("port").value = "502";
+          await refreshAll();
         } catch (error) {
-          setStatus(deviceStatus, false, error.message);
+          showStatus(deviceStatus, false, error.message);
         }
-      });
+      }
 
-      document.getElementById("orderForm").addEventListener("submit", async (event) => {
+      async function createOrder(event) {
         event.preventDefault();
         try {
           const payload = {
@@ -202,27 +871,107 @@
             robotId: document.getElementById("orderRobotId").value.trim() || null,
           };
 
-          const res = await fetch("/api/orders", {
+          await apiJson("/api/orders", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
 
-          const data = await res.json();
-          if (!res.ok || data.ok === false) {
-            setStatus(orderStatus, false, data.error || "No se pudo crear pedido");
-            return;
+          showStatus(orderStatus, true, "Pedido encolado correctamente.");
+          await refreshAll();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
+      }
+
+      async function handleOrderAction(action, orderId) {
+        const endpoint = action === "retry" ? `/api/orders/${encodeURIComponent(orderId)}/retry` : `/api/orders/${encodeURIComponent(orderId)}/cancel`;
+        const verb = action === "retry" ? "reintentado" : "cancelado";
+
+        try {
+          await apiJson(endpoint, { method: "POST" });
+          showStatus(orderStatus, true, `Pedido ${verb}.`);
+          await refreshAll();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
+      }
+
+      async function handleSlotRelease(slotCode) {
+        try {
+          await apiJson(`/api/slots/${encodeURIComponent(slotCode)}/release`, { method: "POST" });
+          showStatus(orderStatus, true, `Slot ${slotCode} liberado.`);
+          await refreshAll();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
+      }
+
+      async function handleReturnBox(slotCode, targetCode) {
+        try {
+          const robotFromFilter = appState.filter.robotId !== "ALL" ? appState.filter.robotId : null;
+          await apiJson("/api/orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "PUT",
+              locationCode: slotCode,
+              targetLocation: targetCode,
+              robotId: robotFromFilter,
+            }),
+          });
+          showStatus(orderStatus, true, `Devolución encolada para slot ${slotCode}.`);
+          await refreshAll();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
+      }
+
+      function bindEvents() {
+        document.getElementById("deviceForm").addEventListener("submit", registerDevice);
+        document.getElementById("orderForm").addEventListener("submit", createOrder);
+
+        document.getElementById("filterRobot").addEventListener("change", (event) => {
+          appState.filter.robotId = event.target.value;
+          renderOrders();
+          renderSlots();
+        });
+
+        document.getElementById("filterEstanteria").addEventListener("change", (event) => {
+          appState.filter.estanteria = event.target.value;
+          renderOrders();
+          renderSlots();
+        });
+
+        document.addEventListener("click", async (event) => {
+          const button = event.target.closest("button[data-action]");
+          if (!button) return;
+
+          const action = button.dataset.action;
+          if (action === "retry" || action === "cancel") {
+            await handleOrderAction(action, button.dataset.id);
           }
 
-          setStatus(orderStatus, true, `Pedido encolado: ${data.data.id}`);
-          await refreshState();
-        } catch (error) {
-          setStatus(orderStatus, false, error.message);
-        }
-      });
+          if (action === "release-slot") {
+            await handleSlotRelease(button.dataset.slot);
+          }
 
-      refreshState();
-      setInterval(refreshState, 1500);
+          if (action === "return-box") {
+            await handleReturnBox(button.dataset.slot, button.dataset.target);
+          }
+        });
+      }
+
+      async function bootstrap() {
+        bindTabs();
+        bindEvents();
+        await refreshAll();
+        setInterval(refreshAll, POLL_MS);
+      }
+
+      bootstrap().catch((error) => {
+        showStatus(orderStatus, false, error.message);
+      });
     </script>
   </body>
 </html>
