@@ -1,5 +1,12 @@
 const { ModbusClient } = require("../../infra/transport/modbus/ModbusClient");
 const { decodeResponse } = require("../../config/plcProtocol");
+const {
+  SingleRegisterCommandStrategy,
+} = require("./strategies/SingleRegisterCommandStrategy");
+const {
+  SplitMessageCommandStrategy,
+} = require("./strategies/SplitMessageCommandStrategy");
+const { CommandStrategyResolver } = require("./strategies/CommandStrategyResolver");
 
 class ConnectionService {
   constructor(options) {
@@ -11,6 +18,25 @@ class ConnectionService {
     this.heartbeatTimeoutMs = options.heartbeatTimeoutMs || Number(process.env.HEARTBEAT_TIMEOUT_MS || 3000);
     this.clients = new Map();
     this.monitorTimer = null;
+    this.defaultCommandStrategy =
+      options.defaultCommandStrategy ||
+      new SingleRegisterCommandStrategy();
+    this.splitMessageCommandStrategy =
+      options.splitMessageCommandStrategy ||
+      new SplitMessageCommandStrategy();
+    this.commandStrategyResolver =
+      options.commandStrategyResolver ||
+      new CommandStrategyResolver({
+        byProtocol: {
+          "single-register": this.defaultCommandStrategy,
+          "split-message": this.splitMessageCommandStrategy,
+        },
+        byType: {
+          CARRO: this.defaultCommandStrategy,
+          ELEVADOR: this.splitMessageCommandStrategy,
+        },
+        defaultStrategy: this.defaultCommandStrategy,
+      });
   }
 
   deviceKey(robotId, type) {
@@ -195,21 +221,20 @@ class ConnectionService {
     }
 
     const client = await this.getClient(device);
-    await client.writeSingleRegister(command.address, command.value);
+    const { strategy, name: strategyName } = this.commandStrategyResolver.resolve(device);
+    const execution = await strategy.execute({
+      client,
+      device,
+      command,
+      decodeResponse,
+      matchesExpectedResponse: this.matchesExpectedResponse.bind(this),
+    });
 
-    const responseAddress = Number(command.responseAddress ?? process.env.MODBUS_RESPONSE_REGISTER ?? 2);
-    const responseValues = await client.readHoldingRegisters(responseAddress, 1);
-    const responseCode = responseValues[0] ?? null;
-    const decoded = decodeResponse(responseCode);
-
-    const stateValues = await client.readHoldingRegisters(command.verifyAddress, 1);
-    const verifyOk = stateValues[0] === command.expectedValue;
-    const responseOk = this.matchesExpectedResponse(responseCode, command.expectedResponses || [100]);
-    const stateOk = verifyOk && responseOk;
+    const { verifyValue, responseCode, decoded, stateOk } = execution;
 
     this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
       lastCommand: command,
-      lastResponse: { verifyValue: stateValues[0], responseCode, decoded, stateOk },
+      lastResponse: { verifyValue, responseCode, decoded, stateOk, strategy: strategyName },
     });
 
     this.stateManager.upsertDevice({
@@ -217,13 +242,13 @@ class ConnectionService {
       status: "CONNECTED",
       lastSeen: Date.now(),
       lastCommand: command,
-      lastResponse: { verifyValue: stateValues[0], responseCode, decoded, stateOk },
+      lastResponse: { verifyValue, responseCode, decoded, stateOk, strategy: strategyName },
     });
 
     return {
       ack: decoded.ok ? "DONE" : "ERROR",
       stateOk,
-      raw: { verifyValue: stateValues[0], responseCode, decoded },
+      raw: { verifyValue, responseCode, decoded, strategy: strategyName },
     };
   }
 }
