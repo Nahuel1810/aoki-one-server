@@ -88,6 +88,15 @@ function hasLocationActionSuffix(input) {
   return /[TDL]$/i.test(String(input || "").trim());
 }
 
+function toParanteCode(moduleNumber) {
+  const numericModule = Number(moduleNumber);
+  if (!Number.isFinite(numericModule) || numericModule <= 0) {
+    throw new Error("Modulo invalido para comando carro");
+  }
+
+  return String(Math.ceil(numericModule / 2)).padStart(2, "0");
+}
+
 function toCarroCommand(location, actionOverride) {
   const parsed = typeof location === "string" ? parseLocationCode(location) : location;
   const action = normalizeAction(actionOverride || parsed.action);
@@ -97,7 +106,9 @@ function toCarroCommand(location, actionOverride) {
   }
 
   const actionBit = action === "T" ? 1 : 0;
-  const command = `${parsed.position}${parsed.moduleCode}${parsed.sideBit}${actionBit}`;
+  const moduleNumber = parsed.moduleNumber ?? Number(parsed.moduleCode);
+  const paranteCode = toParanteCode(moduleNumber);
+  const command = `${parsed.position}${paranteCode}${parsed.sideBit}${actionBit}`;
 
   return {
     command,

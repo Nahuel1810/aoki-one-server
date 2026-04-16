@@ -89,7 +89,7 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
     assert.equal(simulateRes.status, 200);
     assert.equal(simulateData.ok, true);
     assert.equal(simulateData.data.order.robotId, "1");
-    assert.equal(simulateData.data.commandPreview.carroBring.commandCode, 30401);
+    assert.equal(simulateData.data.commandPreview.carroBring.commandCode, 30201);
     assert.equal(simulateData.data.commandPreview.elevadorGoLevel.commandCode, 101);
 
     const createOrderRes = await fetch(toUrl(server, "/api/orders"), {

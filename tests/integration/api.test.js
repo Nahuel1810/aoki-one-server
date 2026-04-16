@@ -99,8 +99,8 @@ test("API simula traduccion de ubicacion sin crear orden", async () => {
     assert.equal(simulateRes.status, 200);
     assert.equal(simulateData.ok, true);
     assert.equal(simulateData.data.order.robotId, "1");
-    assert.equal(simulateData.data.commandPreview.carroBring.commandCode, 30401);
-    assert.equal(simulateData.data.commandPreview.carroReturn.commandCode, 30400);
+    assert.equal(simulateData.data.commandPreview.carroBring.commandCode, 30201);
+    assert.equal(simulateData.data.commandPreview.carroReturn.commandCode, 30200);
     assert.equal(simulateData.data.commandPreview.elevadorGoLevel.commandCode, 101);
     assert.equal(Array.isArray(simulateData.data.stepCommands), true);
     assert.equal(simulateData.data.stepCommands.length > 0, true);

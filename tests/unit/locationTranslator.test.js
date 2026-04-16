@@ -34,8 +34,8 @@ test("construye comando de carro desde ubicacion", () => {
   const parsed = parseLocationCode("3X04AA3T");
   const cmd = toCarroCommand(parsed);
 
-  assert.equal(cmd.command, "30401");
-  assert.equal(cmd.commandCode, 30401);
+  assert.equal(cmd.command, "30201");
+  assert.equal(cmd.commandCode, 30201);
 });
 
 test("permite override de accion para comando carro", () => {
@@ -43,8 +43,16 @@ test("permite override de accion para comando carro", () => {
   const bringCmd = toCarroCommand(parsed, "T");
   const returnCmd = toCarroCommand(parsed, "D");
 
-  assert.equal(bringCmd.commandCode, 30401);
-  assert.equal(returnCmd.commandCode, 30400);
+  assert.equal(bringCmd.commandCode, 30201);
+  assert.equal(returnCmd.commandCode, 30200);
+});
+
+test("usa parante redondeado hacia arriba con dos digitos", () => {
+  const parsed = parseLocationCode("3X03AA1T");
+  const cmd = toCarroCommand(parsed);
+
+  assert.equal(cmd.command, "10211");
+  assert.equal(cmd.commandCode, 10211);
 });
 
 test("construye comando elevador segun nivel", () => {
