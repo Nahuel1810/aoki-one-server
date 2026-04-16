@@ -1,1 +1,6 @@
 node_modules/
+data/persistence.db
+data/persistence.db-shm
+data/persistence.db-wal
+.env
+.env.example
