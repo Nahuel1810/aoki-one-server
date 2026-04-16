@@ -65,6 +65,7 @@ test("construye comando elevador segun nivel", () => {
 
 test("mapeo de estanteria a robot configurable", () => {
   assert.equal(inferRobotIdFromEstanteria("3X"), "1");
-  assert.equal(inferRobotIdFromEstanteria("4X"), "2");
+  assert.equal(inferRobotIdFromEstanteria("4X"), "4X");
+  assert.equal(inferRobotIdFromEstanteria("3Y"), "3Y");
   assert.equal(inferRobotIdFromEstanteria("8X", { robotByEstanteria: { "8X": "99" } }), "99");
 });

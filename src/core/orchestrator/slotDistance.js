@@ -19,15 +19,7 @@ function toParsedSlot(slot) {
 }
 
 function positionPreferenceRank(source, candidate) {
-  if (candidate.moduleNumber < source.moduleNumber) {
-    return 3 - candidate.position;
-  }
-
-  if (candidate.moduleNumber > source.moduleNumber) {
-    return candidate.position - 1;
-  }
-
-  return Math.abs(candidate.position - source.position);
+  return candidate.position - 1;
 }
 
 function comparePickSlotCandidates(sourceParsed, a, b) {

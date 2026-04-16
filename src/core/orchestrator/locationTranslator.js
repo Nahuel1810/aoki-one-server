@@ -37,26 +37,18 @@ function inferRobotIdFromEstanteria(estanteriaCode, options = {}) {
     return String(explicitMap[normalized]);
   }
 
-  const match = normalized.match(/^(\d+)X$/);
-  if (!match) {
-    return null;
-  }
-
-  const shelfNumber = Number(match[1]);
-  if (Number.isFinite(shelfNumber) && shelfNumber >= 3) {
-    return String(shelfNumber - 2);
-  }
-
-  return String(shelfNumber);
+  // Si no hay mapeo explicito, usamos el identificador de estanteria
+  // como robotId para permitir prefijos arbitrarios (ej: 3X, 3Y, RACKA1).
+  return normalized || null;
 }
 
 function parseLocationCode(input, options = {}) {
   const value = String(input || "").trim().toUpperCase();
-  const regex = /^(\d+X)(\d{2})A([A-L])(\d)([TDL])?$/;
+  const regex = /^([A-Z0-9]+)(\d{2})A([A-L])(\d)([TDL])?$/;
   const match = value.match(regex);
 
   if (!match) {
-    throw new Error("Formato de ubicacion invalido. Esperado: 3X04AA3, 3X04AA3T o 3X04AA3D");
+    throw new Error("Formato de ubicacion invalido. Esperado: ID04AA3, ID04AA3T o ID04AA3D");
   }
 
   const [, estanteriaCode, moduleCode, levelLetter, positionText, actionRaw] = match;

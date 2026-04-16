@@ -150,7 +150,7 @@ test("Orchestrator asigna slot automaticamente en PICK", async () => {
   await orchestrator.processOrder("1", order.id);
 
   const updated = stateManager.getOrder(order.id);
-  assert.equal(updated.slotLocationCode, "3X02AE3");
+  assert.equal(updated.slotLocationCode, "3X02AE1");
 });
 
 test("Orchestrator deja la orden en espera si no hay slots libres", async () => {

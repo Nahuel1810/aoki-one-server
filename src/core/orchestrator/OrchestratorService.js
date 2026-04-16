@@ -39,13 +39,12 @@ class OrchestratorService {
   }
 
   static inferRobotId(locationCode) {
-    const raw = String(locationCode || "").trim().toUpperCase();
-    const match = raw.match(/^(\d+X)/);
-    if (!match) {
+    try {
+      const parsed = parseLocationCode(locationCode);
+      return inferRobotIdFromEstanteria(parsed.estanteriaCode);
+    } catch {
       return null;
     }
-
-    return inferRobotIdFromEstanteria(match[1]);
   }
 
   buildSteps(orderType) {

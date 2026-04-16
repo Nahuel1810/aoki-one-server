@@ -45,7 +45,7 @@ test("si no hay mismo nivel, minimiza distancia vertical y luego horizontal", ()
   assert.equal(best.locationCode, "3X02AD1");
 });
 
-test("en modulo menor prioriza posiciones 3 -> 2 -> 1", () => {
+test("prioriza posiciones 1 -> 2 -> 3", () => {
   const source = "3X04AE1";
   const slots = [
     { id: "pos-1", locationCode: "3X02AE1", status: "FREE" },
@@ -57,8 +57,28 @@ test("en modulo menor prioriza posiciones 3 -> 2 -> 1", () => {
 
   assert.deepEqual(
     ranked.map((slot) => slot.id),
-    ["pos-3", "pos-2", "pos-1"],
+    ["pos-1", "pos-2", "pos-3"],
   );
+});
+
+test("prioriza posiciones 1 -> 2 -> 3 para cualquier nivel", () => {
+  const levels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+
+  for (const level of levels) {
+    const source = `3X04A${level}2`;
+    const slots = [
+      { id: `${level}-pos-3`, locationCode: `3X02A${level}3`, status: "FREE" },
+      { id: `${level}-pos-1`, locationCode: `3X02A${level}1`, status: "FREE" },
+      { id: `${level}-pos-2`, locationCode: `3X02A${level}2`, status: "FREE" },
+    ];
+
+    const ranked = sortPickSlotsByDistance(source, slots);
+
+    assert.deepEqual(
+      ranked.map((slot) => slot.id),
+      [`${level}-pos-1`, `${level}-pos-2`, `${level}-pos-3`],
+    );
+  }
 });
 
 test("solo considera slots libres", () => {
