@@ -137,3 +137,37 @@ test("Orchestrator rehidrata snapshot y reencola ordenes pendientes", () => {
   assert.equal(queueManager.dequeueNext("1"), "o-running");
   assert.equal(queueManager.dequeueNext("1"), null);
 });
+
+test("Orchestrator asigna slot automaticamente en PICK", async () => {
+  const fakeConnection = createFakeConnectionService();
+  const { orchestrator, stateManager } = buildOrchestrator(fakeConnection);
+
+  stateManager.configurePickSlots(["3X02AE3", "3X02AE2", "3X02AE1"]);
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "1", locationCode: "3X04AE1" });
+
+  stateManager.upsertRobot({ id: "1", status: "IDLE", enabled: true });
+  orchestrator.queueManager.setActive("1", order.id);
+  await orchestrator.processOrder("1", order.id);
+
+  const updated = stateManager.getOrder(order.id);
+  assert.equal(updated.slotLocationCode, "3X02AE3");
+});
+
+test("Orchestrator deja la orden en espera si no hay slots libres", async () => {
+  const fakeConnection = createFakeConnectionService();
+  const { orchestrator, stateManager, queueManager } = buildOrchestrator(fakeConnection);
+
+  stateManager.configurePickSlots(["3X02AE1"]);
+  stateManager.markSlotOccupied("3X02AE1", "existing", { sourceLocationCode: "3X04AE1" });
+
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "1", locationCode: "3X04AE1" });
+  stateManager.upsertRobot({ id: "1", status: "IDLE", enabled: true });
+  queueManager.setActive("1", order.id);
+
+  await orchestrator.processOrder("1", order.id);
+
+  const updated = stateManager.getOrder(order.id);
+  assert.equal(updated.status, "PENDING");
+  assert.equal(updated.waitingForSlot, true);
+  assert.equal(queueManager.isRobotBusy("1"), false);
+});

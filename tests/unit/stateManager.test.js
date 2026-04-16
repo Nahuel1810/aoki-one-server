@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { StateManager } = require("../../src/core/state/StateManager");
+const { StateManager, SLOT_STATUS } = require("../../src/core/state/StateManager");
 
 test("StateManager crea y actualiza orden", () => {
   const state = new StateManager();
@@ -28,4 +28,37 @@ test("StateManager registra comandos y errores", () => {
   assert.equal(snapshot.commands.length, 1);
   assert.equal(snapshot.errors.length, 1);
   assert.equal(snapshot.commands[0].status, "DONE");
+});
+
+test("StateManager administra slots y los persiste en snapshot", () => {
+  const state = new StateManager({
+    pickSlots: ["3X02AE1", "3X02AE2"],
+  });
+
+  const firstReserve = state.reserveSlot("3X02AE1", "order-1");
+  assert.ok(firstReserve);
+  assert.equal(firstReserve.status, SLOT_STATUS.RESERVED);
+
+  const secondReserve = state.reserveSlot("3X02AE1", "order-2");
+  assert.equal(secondReserve, null);
+
+  const occupied = state.markSlotOccupied("3X02AE1", "order-1", {
+    sourceLocationCode: "3X04AE3",
+    pickOrderId: "order-1",
+  });
+
+  assert.equal(occupied.status, SLOT_STATUS.OCCUPIED);
+  assert.equal(occupied.currentBox.pickOrderId, "order-1");
+
+  const reservedForPut = state.reserveOccupiedSlotForPut("3X02AE1", "order-put");
+  assert.ok(reservedForPut);
+  assert.equal(reservedForPut.status, SLOT_STATUS.RESERVED);
+
+  const released = state.releaseSlot("3X02AE1");
+  assert.equal(released.status, SLOT_STATUS.FREE);
+  assert.equal(released.currentBox, null);
+
+  const snapshot = state.getSnapshot();
+  assert.equal(Array.isArray(snapshot.slots), true);
+  assert.equal(snapshot.slots.length, 2);
 });

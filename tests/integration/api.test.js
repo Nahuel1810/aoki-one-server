@@ -143,3 +143,33 @@ test("API rechaza locationCode con accion final en alta de orden", async () => {
     server.close();
   }
 });
+
+test("API expone estado de slots de pickeo", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+    pickSlots: ["3X02AE1", "3X02AE2"],
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const listRes = await fetch(toUrl(server, "/api/slots"));
+    const listData = await listRes.json();
+
+    assert.equal(listRes.status, 200);
+    assert.equal(listData.ok, true);
+    assert.equal(Array.isArray(listData.data), true);
+    assert.equal(listData.data.length, 2);
+    assert.equal(listData.data[0].status, "FREE");
+
+    const releaseRes = await fetch(toUrl(server, "/api/slots/3X02AE1/release"), {
+      method: "POST",
+    });
+
+    assert.equal(releaseRes.status, 200);
+  } finally {
+    server.close();
+  }
+});

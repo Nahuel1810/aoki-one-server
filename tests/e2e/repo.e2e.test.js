@@ -124,6 +124,11 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
     assert.ok(eventStore.events.length > 0);
     assert.ok(snapshotStore.last);
     assert.ok(Array.isArray(snapshotStore.last.orders));
+    assert.ok(Array.isArray(snapshotStore.last.slots));
+
+    const occupiedSlot = snapshotStore.last.slots.find((slot) => slot.status === "OCCUPIED");
+    assert.ok(occupiedSlot);
+    assert.equal(occupiedSlot.locationCode, "3X02AE3");
   } finally {
     await services.orchestrator.stop();
     await new Promise((resolve) => server.close(resolve));

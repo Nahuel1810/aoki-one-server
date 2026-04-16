@@ -10,8 +10,10 @@ const { FileEventStore } = require("./infra/persistence/FileEventStore");
 const { SnapshotStore } = require("./infra/persistence/SnapshotStore");
 const { SqliteEventStore } = require("./infra/persistence/SqliteEventStore");
 const { SqliteSnapshotStore } = require("./infra/persistence/SqliteSnapshotStore");
+const { resolvePickSlotsConfig } = require("./config/pickSlots");
 const { createOrdersRoutes } = require("./interfaces/api/ordersRoutes");
 const { createDevicesRoutes } = require("./interfaces/api/devicesRoutes");
+const { createSlotsRoutes } = require("./interfaces/api/slotsRoutes");
 
 function createApp(options = {}) {
   const app = express();
@@ -26,7 +28,8 @@ function createApp(options = {}) {
 
   const logger = options.logger || console;
   const queueManager = options.queueManager || new QueueManager();
-  const stateManager = options.stateManager || new StateManager();
+  const pickSlots = resolvePickSlotsConfig(options);
+  const stateManager = options.stateManager || new StateManager({ pickSlots });
   const errorHandler = options.errorHandler || new ErrorHandler({ logger });
   const deviceRegistry = options.deviceRegistry || new DeviceRegistry();
   const persistenceDriver = String(
@@ -78,6 +81,7 @@ function createApp(options = {}) {
       eventStore,
       snapshotStore,
       config: options.orchestratorConfig,
+      pickSlots,
     });
 
   const services = {
@@ -95,6 +99,7 @@ function createApp(options = {}) {
   if (options.enableApi !== false) {
     app.use("/api/orders", createOrdersRoutes(services));
     app.use("/api/devices", createDevicesRoutes(services));
+    app.use("/api/slots", createSlotsRoutes(services));
   }
 
   if (typeof options.configureApp === "function") {

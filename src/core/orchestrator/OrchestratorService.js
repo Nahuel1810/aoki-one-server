@@ -6,6 +6,8 @@ const {
   toCarroCommand,
   toElevadorGoLevelCommand,
 } = require("./locationTranslator");
+const { sortPickSlotsByDistance } = require("./slotDistance");
+const { SLOT_STATUS } = require("../state/StateManager");
 
 class OrchestratorService {
   constructor(options) {
@@ -26,6 +28,14 @@ class OrchestratorService {
 
     this.processingRobots = new Set();
     this.timer = null;
+  }
+
+  getOrderLocationContext(order) {
+    const source = parseLocationCode(order.locationCode);
+    const slot = order.slotLocationCode ? parseLocationCode(order.slotLocationCode) : null;
+    const target = order.targetLocation ? parseLocationCode(order.targetLocation) : null;
+
+    return { source, slot, target };
   }
 
   static inferRobotId(locationCode) {
@@ -56,14 +66,23 @@ class OrchestratorService {
   }
 
   resolveStepCommand(step, order) {
-    const parsed = parseLocationCode(order.locationCode);
-    const carroBring = toCarroCommand(parsed, "T");
-    const carroReturn = toCarroCommand(parsed, "D");
-    const elevadorLevel = toElevadorGoLevelCommand(parsed);
+    const { source, slot, target } = this.getOrderLocationContext(order);
+    const bringSource = source;
+    const dropTarget = order.type === "PICK" ? slot || source : target || source;
+
+    const carroBring = toCarroCommand(bringSource, "T");
+    const carroReturn = toCarroCommand(dropTarget, "D");
+    const elevadorSourceLevel = toElevadorGoLevelCommand(bringSource);
+    const elevadorDropLevel = toElevadorGoLevelCommand(dropTarget);
+
+    let elevadorCommandCode = elevadorSourceLevel.commandCode;
+    if (step.type === "ELEVADOR" && step.id === 4) {
+      elevadorCommandCode = elevadorDropLevel.commandCode;
+    }
 
     const commandCodes = {
       HOMING: CARRO.COMMANDS.INIT,
-      ELEVADOR: elevadorLevel.commandCode,
+      ELEVADOR: elevadorCommandCode,
       CARRO_BUSCA: carroBring.commandCode,
       CARRO_DEJA: carroReturn.commandCode,
       CARRO_DEVUELVE: carroReturn.commandCode,
@@ -123,10 +142,24 @@ class OrchestratorService {
     }
 
     const parsedLocation = parseLocationCode(input.locationCode);
+    const parsedTarget = input.targetLocation ? parseLocationCode(input.targetLocation) : null;
 
     const robotId = input.robotId || parsedLocation.robotId || OrchestratorService.inferRobotId(parsedLocation.baseCode);
     if (!robotId) {
       throw new Error("No se pudo derivar robotId. Enviar robotId o locationCode valido");
+    }
+
+    let slotLocationCode = input.slotLocationCode ? parseLocationCode(input.slotLocationCode).baseCode : null;
+    if (type === "PUT") {
+      slotLocationCode = parsedLocation.baseCode;
+      const slot = this.stateManager.getSlot(slotLocationCode);
+      if (!slot) {
+        throw new Error("PUT requiere locationCode de zona pickeo configurada");
+      }
+
+      if (slot.status !== SLOT_STATUS.OCCUPIED) {
+        throw new Error("El slot no tiene cajon disponible para PUT");
+      }
     }
 
 
@@ -136,8 +169,25 @@ class OrchestratorService {
       type,
       robotId,
       locationCode: parsedLocation.baseCode,
+      targetLocation: parsedTarget ? parsedTarget.baseCode : null,
+      slotLocationCode,
       steps,
     });
+
+    if (type === "PUT" && slotLocationCode) {
+      const reserved = this.stateManager.reserveOccupiedSlotForPut(slotLocationCode, order.id);
+      if (!reserved) {
+        this.stateManager.updateOrder(order.id, { waitingForSlot: true });
+      } else {
+        this.stateManager.pushOrderHistory(order.id, "SLOT_RESERVED", { locationCode: slotLocationCode });
+        this.eventStore.append({
+          entityType: "SLOT",
+          entityId: slotLocationCode,
+          event: "SLOT_RESERVED",
+          metadata: { orderId: order.id, type: "PUT" },
+        });
+      }
+    }
 
     this.stateManager.upsertRobot({ id: robotId, status: "IDLE", enabled: true });
     this.queueManager.enqueue(order);
@@ -204,7 +254,7 @@ class OrchestratorService {
   }
 
   async processOrder(robotId, orderId) {
-    const order = this.stateManager.getOrder(orderId);
+    let order = this.stateManager.getOrder(orderId);
     if (!order) {
       this.queueManager.clearActive(robotId);
       return;
@@ -216,10 +266,66 @@ class OrchestratorService {
       return;
     }
 
+    if (order.type === "PICK" && !order.slotLocationCode) {
+      const assignedSlot = this.assignSlotForPickOrder(order);
+      if (!assignedSlot) {
+        this.deferOrderWaitingForSlot(order, robotId);
+        return;
+      }
+
+      order = this.stateManager.updateOrder(order.id, {
+        slotLocationCode: assignedSlot.locationCode,
+        waitingForSlot: false,
+      });
+      this.stateManager.pushOrderHistory(order.id, "SLOT_ASSIGNED", { locationCode: assignedSlot.locationCode });
+      this.eventStore.append({
+        entityType: "SLOT",
+        entityId: assignedSlot.locationCode,
+        event: "SLOT_RESERVED",
+        metadata: { orderId: order.id, type: "PICK" },
+      });
+    }
+
+    if (order.waitingForSlot && order.slotLocationCode) {
+      this.stateManager.updateOrder(order.id, { waitingForSlot: false });
+    }
+
     this.stateManager.updateOrder(order.id, { status: "IN_PROGRESS" });
+    if (order.slotLocationCode && order.currentStepIndex === 0) {
+      if (order.type === "PICK") {
+        this.stateManager.markSlotPickInProgress(order.slotLocationCode, order.id);
+      } else if (order.type === "PUT") {
+        this.stateManager.markSlotPutInProgress(order.slotLocationCode, order.id);
+      }
+    }
 
     const currentStep = order.steps[order.currentStepIndex];
     if (!currentStep) {
+      if (order.type === "PICK" && order.slotLocationCode) {
+        this.stateManager.markSlotOccupied(order.slotLocationCode, order.id, {
+          sourceLocationCode: order.locationCode,
+          pickOrderId: order.id,
+        });
+        this.stateManager.pushOrderHistory(order.id, "SLOT_OCCUPIED", { locationCode: order.slotLocationCode });
+        this.eventStore.append({
+          entityType: "SLOT",
+          entityId: order.slotLocationCode,
+          event: "SLOT_OCCUPIED",
+          metadata: { orderId: order.id },
+        });
+      }
+
+      if (order.type === "PUT" && order.slotLocationCode) {
+        this.stateManager.releaseSlot(order.slotLocationCode);
+        this.stateManager.pushOrderHistory(order.id, "SLOT_RELEASED", { locationCode: order.slotLocationCode });
+        this.eventStore.append({
+          entityType: "SLOT",
+          entityId: order.slotLocationCode,
+          event: "SLOT_RELEASED",
+          metadata: { orderId: order.id },
+        });
+      }
+
       this.stateManager.updateOrder(order.id, { status: "DONE" });
       this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
       this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE" });
@@ -231,6 +337,16 @@ class OrchestratorService {
 
     const executed = await this.executeStepWithRetry(order, currentStep);
     if (!executed.ok) {
+      if (order.slotLocationCode) {
+        this.stateManager.blockSlot(order.slotLocationCode, executed.error?.message || "step failed", order.id);
+        this.eventStore.append({
+          entityType: "SLOT",
+          entityId: order.slotLocationCode,
+          event: "SLOT_BLOCKED",
+          metadata: { orderId: order.id, reason: executed.error?.message || "step failed" },
+        });
+      }
+
       this.stateManager.updateOrder(order.id, {
         status: "ERROR",
         errorReason: executed.error?.message || "step failed",
@@ -262,6 +378,39 @@ class OrchestratorService {
       event: "STEP_DONE",
       metadata: { robotId, orderId: order.id, step: currentStep.type },
     });
+    this.snapshotStore.save(this.stateManager.getSnapshot());
+  }
+
+  assignSlotForPickOrder(order) {
+    const availableSlots = this.stateManager.listAvailableSlots();
+    const ranked = sortPickSlotsByDistance(order.locationCode, availableSlots);
+
+    for (const slot of ranked) {
+      const reserved = this.stateManager.reserveSlot(slot.locationCode, order.id);
+      if (reserved) {
+        return reserved;
+      }
+    }
+
+    return null;
+  }
+
+  deferOrderWaitingForSlot(order, robotId) {
+    if (!order.waitingForSlot) {
+      this.stateManager.pushOrderHistory(order.id, "ORDER_WAITING_FOR_SLOT", {
+        reason: "NO_PICK_SLOT_AVAILABLE",
+      });
+      this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_WAITING_FOR_SLOT" });
+    }
+
+    const updated = this.stateManager.updateOrder(order.id, {
+      status: "PENDING",
+      waitingForSlot: true,
+    });
+
+    this.queueManager.clearActive(robotId);
+    this.queueManager.enqueue(updated);
+    this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
     this.snapshotStore.save(this.stateManager.getSnapshot());
   }
 
@@ -340,6 +489,7 @@ class OrchestratorService {
       errorReason: null,
       currentStepIndex: 0,
       steps: resetSteps,
+      waitingForSlot: false,
     });
 
     this.queueManager.enqueue(updated);
@@ -355,6 +505,20 @@ class OrchestratorService {
     }
 
     this.queueManager.removeOrder(order.robotId, order.id);
+
+    if (order.slotLocationCode) {
+      const slot = this.stateManager.getSlot(order.slotLocationCode);
+      if (slot?.reservedByOrderId === order.id) {
+        if (order.type === "PICK") {
+          this.stateManager.releaseSlot(order.slotLocationCode);
+        }
+
+        if (order.type === "PUT") {
+          this.stateManager.updateSlotStatus(order.slotLocationCode, SLOT_STATUS.OCCUPIED, null);
+        }
+      }
+    }
+
     const updated = this.stateManager.updateOrder(orderId, { status: "CANCELED" });
     this.eventStore.append({ entityType: "ORDER", entityId: orderId, event: "ORDER_CANCELED" });
     this.stateManager.upsertRobot({ id: updated.robotId, status: "IDLE", currentOrderId: null });

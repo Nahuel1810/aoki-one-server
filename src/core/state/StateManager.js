@@ -1,12 +1,43 @@
 const { randomUUID } = require("node:crypto");
+const { parseLocationCode } = require("../orchestrator/locationTranslator");
+
+const SLOT_STATUS = {
+  FREE: "FREE",
+  RESERVED: "RESERVED",
+  PICK_IN_PROGRESS: "PICK_IN_PROGRESS",
+  OCCUPIED: "OCCUPIED",
+  PUT_IN_PROGRESS: "PUT_IN_PROGRESS",
+  BLOCKED: "BLOCKED",
+};
+
+function normalizeLocationCode(value) {
+  const parsed = parseLocationCode(value);
+  return parsed.baseCode;
+}
+
+function buildInitialSlot(locationCode) {
+  return {
+    id: randomUUID(),
+    locationCode,
+    status: SLOT_STATUS.FREE,
+    reservedByOrderId: null,
+    currentBox: null,
+    lastError: null,
+    updatedAt: Date.now(),
+  };
+}
 
 class StateManager {
-  constructor() {
+  constructor(options = {}) {
     this.orders = new Map();
     this.robots = new Map();
     this.devices = new Map();
     this.commands = new Map();
+    this.slots = new Map();
     this.errors = [];
+
+    this.initialPickSlots = Array.isArray(options.pickSlots) ? options.pickSlots : [];
+    this.configurePickSlots(this.initialPickSlots);
   }
 
   reset() {
@@ -14,7 +45,21 @@ class StateManager {
     this.robots.clear();
     this.devices.clear();
     this.commands.clear();
+    this.slots.clear();
     this.errors = [];
+
+    this.configurePickSlots(this.initialPickSlots);
+  }
+
+  configurePickSlots(locationCodes = []) {
+    for (const code of locationCodes) {
+      const normalized = normalizeLocationCode(code);
+      if (this.slots.has(normalized)) {
+        continue;
+      }
+
+      this.slots.set(normalized, buildInitialSlot(normalized));
+    }
   }
 
   hydrateFromSnapshot(snapshot) {
@@ -38,6 +83,16 @@ class StateManager {
 
     for (const command of snapshot.commands || []) {
       this.commands.set(command.id, command);
+    }
+
+    for (const slot of snapshot.slots || []) {
+      const normalized = normalizeLocationCode(slot.locationCode);
+      this.slots.set(normalized, {
+        ...buildInitialSlot(normalized),
+        ...slot,
+        locationCode: normalized,
+        updatedAt: Date.now(),
+      });
     }
 
     this.errors = Array.isArray(snapshot.errors) ? [...snapshot.errors] : [];
@@ -90,6 +145,8 @@ class StateManager {
       targetLocation: input.targetLocation || null,
       currentStepIndex: 0,
       robotId: input.robotId,
+      slotLocationCode: input.slotLocationCode || null,
+      waitingForSlot: Boolean(input.waitingForSlot),
       errorReason: null,
       steps: input.steps,
       history: [{ ts: now, event: "ORDER_CREATED" }],
@@ -181,6 +238,147 @@ class StateManager {
     return [...this.devices.values()];
   }
 
+  getSlot(locationCode) {
+    const normalized = normalizeLocationCode(locationCode);
+    return this.slots.get(normalized) || null;
+  }
+
+  listSlots() {
+    return [...this.slots.values()].sort((a, b) => a.locationCode.localeCompare(b.locationCode));
+  }
+
+  listAvailableSlots() {
+    return this.listSlots().filter((slot) => slot.status === SLOT_STATUS.FREE);
+  }
+
+  reserveSlot(locationCode, orderId) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot || slot.status !== SLOT_STATUS.FREE) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.RESERVED,
+      reservedByOrderId: orderId,
+      updatedAt: Date.now(),
+      lastError: null,
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  markSlotPickInProgress(locationCode, orderId) {
+    return this.updateSlotStatus(locationCode, SLOT_STATUS.PICK_IN_PROGRESS, orderId);
+  }
+
+  markSlotPutInProgress(locationCode, orderId) {
+    return this.updateSlotStatus(locationCode, SLOT_STATUS.PUT_IN_PROGRESS, orderId);
+  }
+
+  markSlotOccupied(locationCode, orderId, boxData = {}) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.OCCUPIED,
+      reservedByOrderId: orderId,
+      currentBox: {
+        id: boxData.id || `ORDER:${orderId}`,
+        sourceLocationCode: boxData.sourceLocationCode || null,
+        pickOrderId: boxData.pickOrderId || orderId,
+        updatedAt: Date.now(),
+      },
+      updatedAt: Date.now(),
+      lastError: null,
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  reserveOccupiedSlotForPut(locationCode, orderId) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot || slot.status !== SLOT_STATUS.OCCUPIED) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.RESERVED,
+      reservedByOrderId: orderId,
+      updatedAt: Date.now(),
+      lastError: null,
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  releaseSlot(locationCode) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.FREE,
+      reservedByOrderId: null,
+      currentBox: null,
+      updatedAt: Date.now(),
+      lastError: null,
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  blockSlot(locationCode, reason, orderId = null) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.BLOCKED,
+      reservedByOrderId: orderId || slot.reservedByOrderId || null,
+      lastError: reason || null,
+      updatedAt: Date.now(),
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  updateSlotStatus(locationCode, status, orderId = null) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      return null;
+    }
+
+    const updated = {
+      ...slot,
+      status,
+      reservedByOrderId: orderId || slot.reservedByOrderId || null,
+      updatedAt: Date.now(),
+    };
+
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
   listErrors() {
     return [...this.errors].sort((a, b) => b.timestamp - a.timestamp);
   }
@@ -191,6 +389,7 @@ class StateManager {
       robots: this.listRobots(),
       devices: this.listDevices(),
       commands: [...this.commands.values()],
+      slots: this.listSlots(),
       errors: this.listErrors(),
       snapshotAt: Date.now(),
     };
@@ -199,4 +398,5 @@ class StateManager {
 
 module.exports = {
   StateManager,
+  SLOT_STATUS,
 };
