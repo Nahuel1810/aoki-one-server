@@ -94,7 +94,7 @@ class OrchestratorService {
       responseAddress: Number(process.env.MODBUS_RESPONSE_REGISTER || 2),
       expectedResponses: [100],
       verifyAddress: Number(process.env.MODBUS_VERIFY_REGISTER || 1),
-      expectedValue: step.id,
+      expectedValue: step.deviceType === "CARRO" ? step.id : undefined,
     };
   }
 

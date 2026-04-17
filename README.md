@@ -74,43 +74,35 @@ Registro de dispositivo:
   "host": "192.168.1.50",
   "port": 502,
   "unitId": 1,
-  "heartbeatRegister": 0,
+  "registerMap": {
+    "messageIn": 0,
+    "messageOut": 1
+  },
   "timeoutMs": 2000
 }
+```
 
-Registro de elevador con mapeo Modbus dedicado (MensajeIN/MensajeOUT/NewDataIN/NewDataOUT):
+Registro de elevador con mapeo Modbus dedicado:
 
 ```json
 {
   "robotId": "3",
   "type": "ELEVADOR",
-  "protocol": "split-message",
   "host": "192.168.0.50",
   "port": 502,
   "unitId": 255,
-  "messageInRegister": 0,
-  "messageOutRegister": 1,
-  "newDataInRegister": 2,
-  "newDataOutRegister": 3,
-  "heartbeatRegister": 3,
+  "registerMap": {
+    "messageIn": 0,
+    "messageOut": 1
+  },
   "timeoutMs": 2000
 }
 ```
 
-Notas del handshake para elevador:
-- El servidor escribe `MensajeIN`.
-- El PLC procesa el comando y publica resultado en `MensajeOUT`.
-- El servidor lee `MensajeOUT` para saber el estado de la maniobra.
-- El servidor pone `MensajeOUT=0` al finalizar la lectura.
-
-Protocolos soportados por dispositivo:
-- `single-register`: modo clasico (comando/respuesta/verificacion en registros simples).
-- `split-message`: handshake por flags `NewDataIN/NewDataOUT`.
-
-Seleccion de estrategia en runtime:
-- Por defecto, `CARRO` usa `single-register` y `ELEVADOR` usa `split-message`.
-- Se puede forzar explicitamente con `protocol` al registrar el dispositivo.
-```
+Regla de mapeo de registros:
+- El backend toma primero el override del comando (si existe).
+- Si no hay override, usa `registerMap` del dispositivo.
+- Si falta en `registerMap`, usa el mapa por defecto por tipo (`CARRO`/`ELEVADOR`).
 
 ### Ordenes
 

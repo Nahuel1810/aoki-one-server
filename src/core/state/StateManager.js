@@ -106,7 +106,6 @@ class StateManager {
       currentOrderId: null,
       mode: "AUTO",
       enabled: true,
-      lastHeartbeat: null,
       ...current,
       ...robot,
       updatedAt: Date.now(),

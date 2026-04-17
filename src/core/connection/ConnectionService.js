@@ -1,12 +1,6 @@
 const { ModbusClient } = require("../../infra/transport/modbus/ModbusClient");
 const { decodeResponse } = require("../../config/plcProtocol");
-const {
-  SingleRegisterCommandStrategy,
-} = require("./strategies/SingleRegisterCommandStrategy");
-const {
-  SplitMessageCommandStrategy,
-} = require("./strategies/SplitMessageCommandStrategy");
-const { CommandStrategyResolver } = require("./strategies/CommandStrategyResolver");
+const { mergeRegisterMaps } = require("../../config/deviceRegisterMaps");
 
 class ConnectionService {
   constructor(options) {
@@ -14,29 +8,16 @@ class ConnectionService {
     this.stateManager = options.stateManager;
     this.logger = options.logger || console;
     this.simulate = options.simulate ?? true;
-    this.heartbeatIntervalMs = options.heartbeatIntervalMs || Number(process.env.HEARTBEAT_INTERVAL_MS || 1000);
-    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs || Number(process.env.HEARTBEAT_TIMEOUT_MS || 3000);
+    this.connectionCheckIntervalMs =
+      options.connectionCheckIntervalMs ||
+      options.heartbeatIntervalMs ||
+      Number(process.env.CONNECTION_CHECK_INTERVAL_MS || process.env.HEARTBEAT_INTERVAL_MS || 1000);
+    this.connectionTimeoutMs =
+      options.connectionTimeoutMs ||
+      options.heartbeatTimeoutMs ||
+      Number(process.env.CONNECTION_TIMEOUT_MS || process.env.HEARTBEAT_TIMEOUT_MS || 3000);
     this.clients = new Map();
     this.monitorTimer = null;
-    this.defaultCommandStrategy =
-      options.defaultCommandStrategy ||
-      new SingleRegisterCommandStrategy();
-    this.splitMessageCommandStrategy =
-      options.splitMessageCommandStrategy ||
-      new SplitMessageCommandStrategy();
-    this.commandStrategyResolver =
-      options.commandStrategyResolver ||
-      new CommandStrategyResolver({
-        byProtocol: {
-          "single-register": this.defaultCommandStrategy,
-          "split-message": this.splitMessageCommandStrategy,
-        },
-        byType: {
-          CARRO: this.defaultCommandStrategy,
-          ELEVADOR: this.splitMessageCommandStrategy,
-        },
-        defaultStrategy: this.defaultCommandStrategy,
-      });
   }
 
   deviceKey(robotId, type) {
@@ -44,9 +25,39 @@ class ConnectionService {
   }
 
   registerDevice(deviceInput) {
-    const device = this.deviceRegistry.register(deviceInput);
+    const mergedRegisterMap = mergeRegisterMaps(deviceInput.type, deviceInput.registerMap);
+    if (!Number.isFinite(Number(mergedRegisterMap.messageIn))) {
+      throw new Error("registerMap.messageIn es obligatorio");
+    }
+
+    if (!Number.isFinite(Number(mergedRegisterMap.messageOut))) {
+      throw new Error("registerMap.messageOut es obligatorio");
+    }
+
+    const device = this.deviceRegistry.register({
+      ...deviceInput,
+      registerMap: mergedRegisterMap,
+    });
     this.stateManager.upsertDevice(device);
     return device;
+  }
+
+  getRegisterMap(device) {
+    return mergeRegisterMaps(device.type, device.registerMap);
+  }
+
+  CONNECTEDresolveRegister(device, key, overrideValue) {
+    if (overrideValue !== undefined && overrideValue !== null && overrideValue !== "") {
+      return Number(overrideValue);
+    }
+
+    const registerMap = this.getRegisterMap(device);
+    const value = registerMap[key];
+    if (value === undefined || value === null || value === "") {
+      throw new Error(`No hay registro configurado para '${key}' en dispositivo ${device.type}`);
+    }
+
+    return Number(value);
   }
 
   getDevice(robotId, type) {
@@ -81,7 +92,7 @@ class ConnectionService {
       this.monitorTick().catch((error) => {
         this.logger.warn("[connection] monitor tick failed", { error: error.message });
       });
-    }, this.heartbeatIntervalMs);
+    }, this.connectionCheckIntervalMs);
   }
 
   stopMonitoring() {
@@ -95,7 +106,7 @@ class ConnectionService {
 
   async monitorTick() {
     for (const robot of this.stateManager.listRobots()) {
-      await this.heartbeat(robot.id);
+      await this.checkRobotConnections(robot.id);
     }
   }
 
@@ -112,7 +123,7 @@ class ConnectionService {
     this.stateManager.upsertDevice({ ...device, status: "CONNECTED", lastSeen: Date.now() });
   }
 
-  async heartbeat(robotId) {
+  async checkRobotConnections(robotId) {
     const devices = this.deviceRegistry.listByRobot(robotId);
 
     for (const device of devices) {
@@ -123,24 +134,24 @@ class ConnectionService {
             ...device,
             status: "CONNECTED",
             lastSeen: Date.now(),
-            lastResponse: { heartbeat: true, simulated: true },
+            lastResponse: { connected: true, simulated: true },
           });
           continue;
         }
 
         const client = await this.getClient(device);
-        const values = await client.readHoldingRegisters(device.heartbeatRegister || 0, 1);
+        await client.ensureConnected();
         this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
-          lastResponse: { heartbeatValue: values[0] ?? null },
+          lastResponse: { connected: true },
         });
         this.stateManager.upsertDevice({
           ...device,
           status: "CONNECTED",
           lastSeen: Date.now(),
-          lastResponse: { heartbeatValue: values[0] ?? null },
+          lastResponse: { connected: true },
         });
       } catch (error) {
-        this.logger.warn("[connection] heartbeat failed", {
+        this.logger.warn("[connection] connection check failed", {
           robotId,
           type: device.type,
           error: error.message,
@@ -166,17 +177,22 @@ class ConnectionService {
       }
 
       const latest = this.getDevice(robotId, device.type);
-      if (latest?.lastSeen && Date.now() - latest.lastSeen > this.heartbeatTimeoutMs) {
+      if (latest?.lastSeen && Date.now() - latest.lastSeen > this.connectionTimeoutMs) {
         this.deviceRegistry.updateStatus(robotId, device.type, "OFFLINE", {
-          lastResponse: { error: "heartbeat timeout" },
+          lastResponse: { error: "connection timeout" },
         });
         this.stateManager.upsertDevice({
           ...latest,
           status: "OFFLINE",
-          lastResponse: { error: "heartbeat timeout" },
+          lastResponse: { error: "connection timeout" },
         });
       }
     }
+  }
+
+  // Backward compatibility for callers using the old method name.
+  async heartbeat(robotId) {
+    return this.checkRobotConnections(robotId);
   }
 
   matchesExpectedResponse(code, expectedResponses = [100]) {
@@ -221,20 +237,21 @@ class ConnectionService {
     }
 
     const client = await this.getClient(device);
-    const { strategy, name: strategyName } = this.commandStrategyResolver.resolve(device);
-    const execution = await strategy.execute({
-      client,
-      device,
-      command,
-      decodeResponse,
-      matchesExpectedResponse: this.matchesExpectedResponse.bind(this),
-    });
+    const commandAddress = this.resolveRegister(device, "messageIn", command.address);
+    const responseAddress = this.resolveRegister(device, "messageOut", command.responseAddress);
 
-    const { verifyValue, responseCode, decoded, stateOk } = execution;
+    await client.writeSingleRegister(commandAddress, Number(command.value));
+
+    const responseValues = await client.readHoldingRegisters(responseAddress, 1);
+    const responseCode = responseValues[0] ?? null;
+
+    const decoded = decodeResponse(responseCode);
+    const responseOk = this.matchesExpectedResponse(responseCode, command.expectedResponses || [100]);
+    const stateOk = responseOk;
 
     this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
       lastCommand: command,
-      lastResponse: { verifyValue, responseCode, decoded, stateOk, strategy: strategyName },
+      lastResponse: { responseCode, decoded, stateOk },
     });
 
     this.stateManager.upsertDevice({
@@ -242,14 +259,45 @@ class ConnectionService {
       status: "CONNECTED",
       lastSeen: Date.now(),
       lastCommand: command,
-      lastResponse: { verifyValue, responseCode, decoded, stateOk, strategy: strategyName },
+      lastResponse: { responseCode, decoded, stateOk },
     });
 
     return {
       ack: decoded.ok ? "DONE" : "ERROR",
       stateOk,
-      raw: { verifyValue, responseCode, decoded, strategy: strategyName },
+      raw: { responseCode, decoded },
     };
+  }
+
+  async readVariable({ robotId, type, variable, length = 1 }) {
+    const device = this.getDevice(robotId, type);
+    if (!device) {
+      throw new Error(`No hay dispositivo ${type} para robot ${robotId}`);
+    }
+
+    if (this.simulate) {
+      return new Array(length).fill(0);
+    }
+
+    const client = await this.getClient(device);
+    const address = this.resolveRegister(device, variable);
+    return client.readHoldingRegisters(address, length);
+  }
+
+  async writeVariable({ robotId, type, variable, value }) {
+    const device = this.getDevice(robotId, type);
+    if (!device) {
+      throw new Error(`No hay dispositivo ${type} para robot ${robotId}`);
+    }
+
+    if (this.simulate) {
+      return { ok: true, simulated: true };
+    }
+
+    const client = await this.getClient(device);
+    const address = this.resolveRegister(device, variable);
+    await client.writeSingleRegister(address, Number(value));
+    return { ok: true };
   }
 }
 

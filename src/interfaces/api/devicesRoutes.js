@@ -27,6 +27,23 @@ function normalizeDeviceProtocol(value) {
   return undefined;
 }
 
+function parseRegisterMap(body = {}) {
+  const incoming = body.registerMap && typeof body.registerMap === "object" ? body.registerMap : null;
+  const messageIn = parseOptionalNumber(incoming?.messageIn);
+  const messageOut = parseOptionalNumber(incoming?.messageOut);
+  const registerMap = {};
+
+  if (messageIn !== undefined) {
+    registerMap.messageIn = messageIn;
+  }
+
+  if (messageOut !== undefined) {
+    registerMap.messageOut = messageOut;
+  }
+
+  return registerMap;
+}
+
 function createDevicesRoutes(services) {
   const router = express.Router();
 
@@ -52,15 +69,8 @@ function createDevicesRoutes(services) {
         host: body.host,
         port: Number(body.port || 502),
         unitId: Number(body.unitId || 1),
-        heartbeatRegister: Number(body.heartbeatRegister || 0),
         timeoutMs: Number(body.timeoutMs || 2000),
-        commandRegister: parseOptionalNumber(body.commandRegister),
-        responseRegister: parseOptionalNumber(body.responseRegister),
-        verifyRegister: parseOptionalNumber(body.verifyRegister),
-        messageInRegister: parseOptionalNumber(body.messageInRegister),
-        messageOutRegister: parseOptionalNumber(body.messageOutRegister),
-        newDataInRegister: parseOptionalNumber(body.newDataInRegister),
-        newDataOutRegister: parseOptionalNumber(body.newDataOutRegister),
+        registerMap: parseRegisterMap(body),
       });
 
       services.stateManager.upsertRobot({ id: String(body.robotId), status: "IDLE", enabled: true });
