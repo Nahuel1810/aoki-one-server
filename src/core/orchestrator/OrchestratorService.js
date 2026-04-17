@@ -60,7 +60,6 @@ class OrchestratorService {
         status: "PENDING",
         retries: 0,
       },
-      { id: 6, type: "HOMING", deviceType: "CARRO", status: "PENDING", retries: 0 },
     ];
   }
 
@@ -89,12 +88,8 @@ class OrchestratorService {
 
     return {
       commandCode: commandCodes[step.type] || 0,
-      address: Number(process.env.MODBUS_COMMAND_REGISTER || 0),
       value: commandCodes[step.type] || 0,
-      responseAddress: Number(process.env.MODBUS_RESPONSE_REGISTER || 2),
       expectedResponses: [100],
-      verifyAddress: Number(process.env.MODBUS_VERIFY_REGISTER || 1),
-      expectedValue: step.deviceType === "CARRO" ? step.id : undefined,
     };
   }
 

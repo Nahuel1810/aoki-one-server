@@ -213,6 +213,20 @@ class ConnectionService {
     });
   }
 
+  splitCarroCommandValue(value) {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) {
+      throw new Error("Comando de carro invalido");
+    }
+
+    const digits = String(Math.trunc(normalized)).padStart(5, "0").slice(-5);
+    return {
+      high: Number(digits[0]),
+      low: Number(digits.slice(1)),
+      raw: digits,
+    };
+  }
+
   async executeStepCommand({ robotId, step, command }) {
     const device = this.getDevice(robotId, step.deviceType);
     if (!device) {
@@ -240,7 +254,13 @@ class ConnectionService {
     const commandAddress = this.resolveRegister(device, "messageIn", command.address);
     const responseAddress = this.resolveRegister(device, "messageOut", command.responseAddress);
 
-    await client.writeSingleRegister(commandAddress, Number(command.value));
+    if (String(device.type).toUpperCase() === "CARRO") {
+      const { high, low } = this.splitCarroCommandValue(command.value);
+      await client.writeSingleRegister(commandAddress, high);
+      await client.writeSingleRegister(commandAddress + 1, low);
+    } else {
+      await client.writeSingleRegister(commandAddress, Number(command.value));
+    }
 
     const responseValues = await client.readHoldingRegisters(responseAddress, 1);
     const responseCode = responseValues[0] ?? null;

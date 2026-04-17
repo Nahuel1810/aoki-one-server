@@ -107,7 +107,7 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
     const createdOrderId = createOrderData.data.id;
     const finalOrder = await waitForOrderStatus(server, createdOrderId, "DONE", 6000);
     assert.equal(finalOrder.status, "DONE");
-    assert.equal(finalOrder.currentStepIndex, 6);
+    assert.equal(finalOrder.currentStepIndex, 5);
 
     const robotsRes = await fetch(toUrl(server, "/api/devices/robots"));
     const robotsData = await robotsRes.json();

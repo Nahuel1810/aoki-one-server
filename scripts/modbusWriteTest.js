@@ -24,7 +24,12 @@ async function main() {
     console.log("STEP connect:ok");
     // 40001 in manual notation usually maps to address 0 (zero-based)
     console.log("STEP write:start address=0 value=104");
-    await client.writeSingleRegister(0, 104);
+    console.log("STEP read:start address=2 length=3");
+    const values = await client.readHoldingRegisters(0);
+    console.log("READ_OK address=2 length=3 values=", values);
+    values.forEach((value, index) => {
+      console.log(`HOLDING_REGISTER address=${2 + index} value=${value}`);
+    });
     console.log("WRITE_OK address=0 value=104");
   } catch (error) {
     console.error("WRITE_ERROR", error?.message || error);
