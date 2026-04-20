@@ -82,6 +82,13 @@ class ModbusClient {
       return data?.data || [];
     });
   }
+
+  async readInputRegisters(address, length = 1) {
+    return this.runWithRetry(async () => {
+      const data = await this.client.readInputRegisters(address, length);
+      return data?.data || [];
+    });
+  }
 }
 
 module.exports = {

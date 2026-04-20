@@ -99,14 +99,18 @@ function createOrdersRoutes(services) {
     res.json({ ok: true, data: order });
   });
 
-  router.post("/:id/retry", (req, res) => {
-    const order = services.orchestrator.retryOrder(req.params.id);
-    if (!order) {
-      res.status(404).json({ ok: false, error: "Order no encontrada" });
-      return;
-    }
+  router.post("/:id/retry", async (req, res) => {
+    try {
+      const order = await services.orchestrator.retryOrder(req.params.id);
+      if (!order) {
+        res.status(404).json({ ok: false, error: "Order no encontrada" });
+        return;
+      }
 
-    res.status(202).json({ ok: true, data: order });
+      res.status(202).json({ ok: true, data: order });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
   });
 
   router.post("/:id/cancel", (req, res) => {

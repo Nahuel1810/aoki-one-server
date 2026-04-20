@@ -1,6 +1,6 @@
 const CARRO = {
   COMMANDS: {
-    INIT: 40000,
+    INIT: 41000,
     PUENTE_DER: 50000,
     PUENTE_IZQ: 51000,
     EXECUTE_LIST: 90000,

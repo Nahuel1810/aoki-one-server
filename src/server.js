@@ -1,19 +1,31 @@
+require("dotenv").config();
 const { createApp } = require("./app");
 
-const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
+const HTTP_PORT =3000;
 
 async function bootstrap() {
   const { app, services } = createApp();
+  console.log(`[boot] mode=${services.connectionService.simulate ? "simulation" : "modbus"}`);
 
   const snapshot = services.snapshotStore.load();
   if (snapshot) {
+    console.log("[boot] snapshot found, rehydrating orchestrator state");
     services.orchestrator.rehydrateFromSnapshot(snapshot);
+
+    const restoredDevices = services.connectionService.restoreRegisteredDevices(
+      services.stateManager.listDevices()
+    );
+    console.log(`[boot] restored devices in registry: ${restoredDevices}`);
+  } else {
+    console.log("[boot] no snapshot found");
   }
 
   if (typeof services.connectionService.startMonitoring === "function") {
+    console.log("[boot] starting connection monitor");
     services.connectionService.startMonitoring();
   }
 
+  console.log("[boot] starting orchestrator loop");
   await services.orchestrator.start();
 
   const httpServer = app.listen(HTTP_PORT, () => {

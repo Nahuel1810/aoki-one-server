@@ -61,6 +61,12 @@ function createApp(options = {}) {
       ? options.simulatePlc
       : String(process.env.SIMULATE_PLC || "true").toLowerCase() === "true";
 
+  logger.info?.("[app] boot config", {
+    mode: simulatePlc ? "simulation" : "modbus",
+    persistenceDriver,
+    pickSlotsCount: pickSlots.length,
+  });
+
   const connectionService =
     options.connectionService ||
     new ConnectionService({
@@ -95,6 +101,12 @@ function createApp(options = {}) {
     snapshotStore,
     eventStore,
   };
+
+  logger.info?.("[app] services ready", {
+    apiEnabled: options.enableApi !== false,
+    staticEnabled: options.enableStatic !== false,
+    jsonEnabled: options.enableJson !== false,
+  });
 
   if (options.enableApi !== false) {
     app.use("/api/orders", createOrdersRoutes(services));

@@ -173,3 +173,54 @@ test("API expone estado de slots de pickeo", async () => {
     server.close();
   }
 });
+
+test("API permite comando directo y lectura de estado por dispositivo", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const registerRes = await fetch(toUrl(server, "/api/devices/register"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        robotId: "1",
+        type: "CARRO",
+        host: "192.168.1.10",
+        port: 502,
+      }),
+    });
+
+    assert.equal(registerRes.status, 201);
+
+    const commandRes = await fetch(toUrl(server, "/api/devices/1/carro/command"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: 10201,
+      }),
+    });
+    const commandData = await commandRes.json();
+
+    assert.equal(commandRes.status, 200);
+    assert.equal(commandData.ok, true);
+    assert.equal(commandData.data.response.ack, "DONE");
+
+    const stateRes = await fetch(toUrl(server, "/api/devices/1/carro/state"));
+    const stateData = await stateRes.json();
+
+    assert.equal(stateRes.status, 200);
+    assert.equal(stateData.ok, true);
+    assert.equal(stateData.data.type, "CARRO");
+    assert.equal(stateData.data.values.messageIn1, 0);
+    assert.equal(stateData.data.values.messageIn2, 0);
+    assert.equal(stateData.data.values.messageOut, 0);
+    assert.equal(stateData.data.simulated, true);
+  } finally {
+    server.close();
+  }
+});

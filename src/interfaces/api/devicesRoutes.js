@@ -51,6 +51,13 @@ function createDevicesRoutes(services) {
     try {
       const body = req.body || {};
       const deviceType = normalizeDeviceType(body.type);
+      services.logger?.info?.("[api/devices] register requested", {
+        robotId: body.robotId,
+        type: body.type,
+        host: body.host,
+        port: body.port,
+        unitId: body.unitId,
+      });
 
       if (!deviceType) {
         res.status(400).json({ ok: false, error: "type invalido. Usar CARRO o ELEVADOR" });
@@ -76,8 +83,15 @@ function createDevicesRoutes(services) {
       services.stateManager.upsertRobot({ id: String(body.robotId), status: "IDLE", enabled: true });
       await services.connectionService.connectDevice(device);
 
+      services.logger?.info?.("[api/devices] register ok", {
+        robotId: device.robotId,
+        type: device.type,
+        registerMap: device.registerMap,
+      });
+
       res.status(201).json({ ok: true, data: device });
     } catch (error) {
+      services.logger?.error?.("[api/devices] register failed", { error: error.message });
       res.status(400).json({ ok: false, error: error.message });
     }
   });
@@ -94,6 +108,78 @@ function createDevicesRoutes(services) {
     }));
 
     res.json({ ok: true, data: robots });
+  });
+
+  router.post("/:robotId/:type/command", async (req, res) => {
+    try {
+      const robotId = String(req.params.robotId || "").trim();
+      const deviceType = normalizeDeviceType(req.params.type);
+      const body = req.body || {};
+      const value = parseOptionalNumber(body.value);
+      const expectedResponses = Array.isArray(body.expectedResponses)
+        ? body.expectedResponses
+        : [parseOptionalNumber(body.expectedResponse) ?? 100];
+
+      if (!deviceType) {
+        res.status(400).json({ ok: false, error: "type invalido. Usar CARRO o ELEVADOR" });
+        return;
+      }
+
+      if (!robotId) {
+        res.status(400).json({ ok: false, error: "robotId es obligatorio" });
+        return;
+      }
+
+      if (value === undefined) {
+        res.status(400).json({ ok: false, error: "value es obligatorio y numerico" });
+        return;
+      }
+
+      const response = await services.connectionService.executeDirectCommand({
+        robotId,
+        type: deviceType,
+        value,
+        expectedResponses,
+      });
+
+      res.json({
+        ok: true,
+        data: {
+          robotId,
+          type: deviceType,
+          commandValue: value,
+          response,
+        },
+      });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.get("/:robotId/:type/state", async (req, res) => {
+    try {
+      const robotId = String(req.params.robotId || "").trim();
+      const deviceType = normalizeDeviceType(req.params.type);
+
+      if (!deviceType) {
+        res.status(400).json({ ok: false, error: "type invalido. Usar CARRO o ELEVADOR" });
+        return;
+      }
+
+      if (!robotId) {
+        res.status(400).json({ ok: false, error: "robotId es obligatorio" });
+        return;
+      }
+
+      const state = await services.connectionService.readDeviceState({
+        robotId,
+        type: deviceType,
+      });
+
+      res.json({ ok: true, data: state });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
   });
 
   return router;

@@ -84,6 +84,52 @@ test("Orchestrator marca error cuando agota retries", async () => {
   assert.equal(fakeConnection.calls.length, 3);
 });
 
+test("Orchestrator reintenta cuando PLC responde error reintentable", async () => {
+  const fakeConnection = createFakeConnectionService({
+    plan: [
+      {
+        ack: "ERROR",
+        stateOk: false,
+        raw: {
+          responseCode: 101,
+          decoded: { kind: "ERROR", errorCode: 1, ok: false, message: "Error PLC reintentable" },
+        },
+      },
+      { ack: "DONE", stateOk: true, raw: { ok: true } },
+    ],
+  });
+
+  const { orchestrator } = buildOrchestrator(fakeConnection, { maxRetries: 3 });
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "4", locationCode: "3X04AA3" });
+
+  const result = await orchestrator.executeStepWithRetry(order, order.steps[0]);
+  assert.equal(result.ok, true);
+  assert.equal(fakeConnection.calls.length, 2);
+});
+
+test("Orchestrator no reintenta cuando PLC responde error 99", async () => {
+  const fakeConnection = createFakeConnectionService({
+    plan: [
+      {
+        ack: "ERROR",
+        stateOk: false,
+        raw: {
+          responseCode: 199,
+          decoded: { kind: "ERROR", errorCode: 99, ok: false, message: "No logro recuperarse" },
+        },
+      },
+    ],
+  });
+
+  const { orchestrator } = buildOrchestrator(fakeConnection, { maxRetries: 3 });
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "5", locationCode: "3X04AA3" });
+
+  const result = await orchestrator.executeStepWithRetry(order, order.steps[0]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.message, "No logro recuperarse");
+  assert.equal(fakeConnection.calls.length, 1);
+});
+
 test("Orchestrator rehidrata snapshot y reencola ordenes pendientes", () => {
   const fakeConnection = createFakeConnectionService();
   const { orchestrator, queueManager, stateManager } = buildOrchestrator(fakeConnection);
@@ -170,4 +216,30 @@ test("Orchestrator deja la orden en espera si no hay slots libres", async () => 
   assert.equal(updated.status, "PENDING");
   assert.equal(updated.waitingForSlot, true);
   assert.equal(queueManager.isRobotBusy("1"), false);
+});
+
+test("Orchestrator retryOrder resetea messageIn del robot antes de reencolar", async () => {
+  const fakeConnection = {
+    calls: [],
+    async resetRobotMessageIn(robotId) {
+      this.calls.push(robotId);
+      return { robotId, reset: 2, failures: [] };
+    },
+    async executeStepCommand() {
+      return { ack: "DONE", stateOk: true, raw: { fake: true } };
+    },
+  };
+
+  const { orchestrator, stateManager, queueManager } = buildOrchestrator(fakeConnection);
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "1", locationCode: "3X04AA3" });
+  stateManager.updateOrder(order.id, { status: "ERROR", errorReason: "forced" });
+
+  const retried = await orchestrator.retryOrder(order.id);
+
+  assert.equal(fakeConnection.calls.length, 1);
+  assert.equal(fakeConnection.calls[0], "1");
+  assert.equal(retried.status, "PENDING");
+  assert.equal(retried.currentStepIndex, 0);
+  assert.equal(retried.errorReason, null);
+  assert.equal(queueManager.ensureRobot("1").items.includes(order.id), true);
 });

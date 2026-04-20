@@ -434,6 +434,14 @@ class OrchestratorService {
         });
 
         if (!response.stateOk) {
+          const decoded = response?.raw?.decoded;
+          if (decoded?.kind === "ERROR") {
+            const plcError = new Error(decoded.message || "Error PLC");
+            plcError.errorCode = decoded.errorCode;
+            plcError.fatal = Number(decoded.errorCode) === 99;
+            throw plcError;
+          }
+
           const mismatchError = new Error("Estado PLC no coincide con lo esperado");
           mismatchError.fatal = false;
           throw mismatchError;
@@ -471,11 +479,13 @@ class OrchestratorService {
     return { ok: false, error: new Error("step failed") };
   }
 
-  retryOrder(orderId) {
+  async retryOrder(orderId) {
     const order = this.stateManager.getOrder(orderId);
     if (!order) {
       return null;
     }
+
+    await this.connectionService.resetRobotMessageIn(order.robotId);
 
     const resetSteps = this.buildSteps(order.type);
     const updated = this.stateManager.updateOrder(orderId, {
@@ -489,6 +499,7 @@ class OrchestratorService {
     this.queueManager.enqueue(updated);
     this.stateManager.upsertRobot({ id: updated.robotId, status: "IDLE", currentOrderId: null });
     this.eventStore.append({ entityType: "ORDER", entityId: orderId, event: "ORDER_RETRIED" });
+    this.snapshotStore.save(this.stateManager.getSnapshot());
     return updated;
   }
 
