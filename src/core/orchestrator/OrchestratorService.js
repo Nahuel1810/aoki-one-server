@@ -226,6 +226,10 @@ class OrchestratorService {
       if (!this.queueManager.isRobotBusy(robot.id)) {
         const nextOrderId = this.queueManager.dequeueNext(robot.id);
         if (nextOrderId) {
+          this.logger.info?.("[orchestrator] order activated", {
+            robotId: robot.id,
+            orderId: nextOrderId,
+          });
           this.queueManager.setActive(robot.id, nextOrderId);
           this.stateManager.upsertRobot({ id: robot.id, status: "BUSY", currentOrderId: nextOrderId });
         }
@@ -295,6 +299,11 @@ class OrchestratorService {
 
     const currentStep = order.steps[order.currentStepIndex];
     if (!currentStep) {
+      this.logger.info?.("[orchestrator] order completed", {
+        robotId,
+        orderId: order.id,
+      });
+
       if (order.type === "PICK" && order.slotLocationCode) {
         this.stateManager.markSlotOccupied(order.slotLocationCode, order.id, {
           sourceLocationCode: order.locationCode,
@@ -329,9 +338,28 @@ class OrchestratorService {
       return;
     }
 
+    this.logger.info?.("[orchestrator] step start", {
+      robotId,
+      orderId: order.id,
+      stepId: currentStep.id,
+      stepType: currentStep.type,
+      deviceType: currentStep.deviceType,
+      stepIndex: order.currentStepIndex,
+    });
+
     const executed = await this.executeStepWithRetry(order, currentStep);
     if (!executed.ok) {
       const shouldPauseRobot = Number(executed.error?.errorCode) === 99;
+
+      this.logger.warn?.("[orchestrator] step failed", {
+        robotId,
+        orderId: order.id,
+        stepId: currentStep.id,
+        stepType: currentStep.type,
+        error: executed.error?.message,
+        errorCode: executed.error?.errorCode,
+        paused: shouldPauseRobot,
+      });
 
       if (order.slotLocationCode) {
         this.stateManager.blockSlot(order.slotLocationCode, executed.error?.message || "step failed", order.id);
@@ -361,6 +389,14 @@ class OrchestratorService {
       this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
     }
+
+    this.logger.info?.("[orchestrator] step done", {
+      robotId,
+      orderId: order.id,
+      stepId: currentStep.id,
+      stepType: currentStep.type,
+      nextStepIndex: order.currentStepIndex + 1,
+    });
 
     currentStep.status = "DONE";
     currentStep.finishedAt = Date.now();
@@ -421,8 +457,27 @@ class OrchestratorService {
 
     const commandPayload = this.resolveStepCommand(step, order);
 
+    this.logger.info?.("[orchestrator] maneuver resolved", {
+      orderId: order.id,
+      robotId: order.robotId,
+      stepId: step.id,
+      stepType: step.type,
+      deviceType: step.deviceType,
+      commandCode: commandPayload.commandCode,
+      commandValue: commandPayload.value,
+    });
+
     for (let attempt = 1; attempt <= this.config.maxRetries; attempt += 1) {
       try {
+        this.logger.info?.("[orchestrator] step attempt", {
+          orderId: order.id,
+          robotId: order.robotId,
+          stepId: step.id,
+          stepType: step.type,
+          attempt,
+          maxRetries: this.config.maxRetries,
+        });
+
         step.retries = attempt - 1;
         const commandEntity = this.stateManager.addCommand({
           orderId: order.id,
@@ -461,6 +516,14 @@ class OrchestratorService {
           rawResponse: response.raw,
         });
 
+        this.logger.info?.("[orchestrator] step acknowledged", {
+          orderId: order.id,
+          robotId: order.robotId,
+          stepId: step.id,
+          stepType: step.type,
+          responseCode: response?.raw?.responseCode,
+        });
+
         return { ok: true };
       } catch (error) {
         this.errorHandler.capture(this.stateManager, {
@@ -475,10 +538,29 @@ class OrchestratorService {
         });
 
         if (!this.errorHandler.isRetryable(error) || attempt === this.config.maxRetries) {
+          this.logger.warn?.("[orchestrator] step terminal error", {
+            orderId: order.id,
+            robotId: order.robotId,
+            stepId: step.id,
+            stepType: step.type,
+            attempt,
+            error: error.message,
+            errorCode: error.errorCode,
+            fatal: Boolean(error.fatal),
+          });
           return { ok: false, error };
         }
 
         const backoff = this.errorHandler.nextBackoffMs(attempt, this.config.baseBackoffMs);
+        this.logger.warn?.("[orchestrator] step retry scheduled", {
+          orderId: order.id,
+          robotId: order.robotId,
+          stepId: step.id,
+          stepType: step.type,
+          nextAttempt: attempt + 1,
+          backoffMs: backoff,
+          error: error.message,
+        });
         await this.errorHandler.sleep(backoff);
       }
     }

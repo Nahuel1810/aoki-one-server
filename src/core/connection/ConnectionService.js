@@ -270,11 +270,22 @@ class ConnectionService {
 
   async writeResetMessageIn(client, deviceType, commandAddress) {
     if (String(deviceType).toUpperCase() === "CARRO") {
+      this.logger.info?.("[connection] write plc reset messageIn", {
+        deviceType,
+        writes: [
+          { address: commandAddress, value: 0 },
+          { address: commandAddress + 1, value: 0 },
+        ],
+      });
       await client.writeSingleRegister(commandAddress, 0);
       await client.writeSingleRegister(commandAddress + 1, 0);
       return;
     }
 
+    this.logger.info?.("[connection] write plc reset messageIn", {
+      deviceType,
+      writes: [{ address: commandAddress, value: 0 }],
+    });
     await client.writeSingleRegister(commandAddress, 0);
   }
 
@@ -495,6 +506,15 @@ class ConnectionService {
         high,
         low,
       });
+      this.logger.info?.("[connection] write plc messageIn", {
+        robotId,
+        deviceType: device.type,
+        step: step.type,
+        writes: [
+          { address: commandAddress, value: high },
+          { address: commandAddress + 1, value: low },
+        ],
+      });
 
       try {
         await client.writeSingleRegister(commandAddress, high);
@@ -519,6 +539,13 @@ class ConnectionService {
         commandError.fatal = true;
         throw commandError;
       }
+
+      this.logger.info?.("[connection] write plc messageIn", {
+        robotId,
+        deviceType: device.type,
+        step: step.type,
+        writes: [{ address: commandAddress, value: commandValue }],
+      });
 
       await client.writeSingleRegister(commandAddress, commandValue);
     }
