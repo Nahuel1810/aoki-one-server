@@ -224,3 +224,47 @@ test("API permite comando directo y lectura de estado por dispositivo", async ()
     server.close();
   }
 });
+
+test("API permite pausar y reanudar ejecucion automatica de cola por robot", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const registerRes = await fetch(toUrl(server, "/api/devices/register"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        robotId: "1",
+        type: "CARRO",
+        host: "192.168.1.10",
+        port: 502,
+      }),
+    });
+    assert.equal(registerRes.status, 201);
+
+    const pauseRes = await fetch(toUrl(server, "/api/devices/robots/1/pause"), {
+      method: "POST",
+    });
+    const pauseData = await pauseRes.json();
+    assert.equal(pauseRes.status, 200);
+    assert.equal(pauseData.ok, true);
+    assert.equal(pauseData.data.enabled, false);
+    assert.equal(pauseData.data.status, "PAUSED");
+
+    const resumeRes = await fetch(toUrl(server, "/api/devices/robots/1/resume"), {
+      method: "POST",
+    });
+    const resumeData = await resumeRes.json();
+    assert.equal(resumeRes.status, 200);
+    assert.equal(resumeData.ok, true);
+    assert.equal(resumeData.data.enabled, true);
+    assert.ok(["IDLE", "BUSY"].includes(resumeData.data.status));
+  } finally {
+    server.close();
+  }
+});

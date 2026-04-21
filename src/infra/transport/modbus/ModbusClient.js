@@ -6,9 +6,11 @@ class ModbusClient {
     this.port = options.port || 502;
     this.unitId = options.unitId || 1;
     this.timeoutMs = options.timeoutMs || 2000;
+    this.operationTimeoutMs = 15000;
     this.retryAttempts = options.retryAttempts || 3;
     this.retryBackoffMs = options.retryBackoffMs || 300;
-    this.client = new ModbusRTU();
+    this.clientFactory = options.clientFactory || (() => new ModbusRTU());
+    this.client = this.clientFactory();
     this.connected = false;
   }
 
@@ -18,6 +20,23 @@ class ModbusClient {
 
   markDisconnected() {
     this.connected = false;
+  }
+
+  async recreateClient() {
+    const previous = this.client;
+    this.connected = false;
+
+    if (previous?.close) {
+      await new Promise((resolve) => {
+        try {
+          previous.close(() => resolve());
+        } catch {
+          resolve();
+        }
+      });
+    }
+
+    this.client = this.clientFactory();
   }
 
   async connect() {
@@ -32,12 +51,11 @@ class ModbusClient {
   }
 
   async disconnect() {
-    if (!this.connected) {
+    if (!this.connected && !this.client?.close) {
       return;
     }
 
-    this.client.close(() => {});
-    this.connected = false;
+    await this.recreateClient();
   }
 
   async ensureConnected() {
@@ -53,11 +71,13 @@ class ModbusClient {
 
     for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
       try {
-        await this.ensureConnected();
-        return await action();
+        return await this.runWithOperationTimeout(async () => {
+          await this.ensureConnected();
+          return action();
+        });
       } catch (error) {
         lastError = error;
-        this.markDisconnected();
+        await this.recreateClient();
 
         if (attempt >= this.retryAttempts) {
           throw error;
@@ -68,6 +88,28 @@ class ModbusClient {
     }
 
     throw lastError || new Error("Operacion Modbus fallo");
+  }
+
+  async runWithOperationTimeout(action) {
+    let timeoutId = null;
+
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const timeoutError = new Error(
+            `Operacion Modbus excedio timeout de ${this.operationTimeoutMs}ms`
+          );
+          timeoutError.code = "MODBUS_OPERATION_TIMEOUT";
+          reject(timeoutError);
+        }, this.operationTimeoutMs);
+      });
+
+      return await Promise.race([action(), timeoutPromise]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   async writeSingleRegister(address, value) {

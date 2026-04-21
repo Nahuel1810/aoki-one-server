@@ -47,6 +47,12 @@ function parseRegisterMap(body = {}) {
 function createDevicesRoutes(services) {
   const router = express.Router();
 
+  function getRobotById(robotId) {
+    return services.stateManager
+      .listRobots()
+      .find((robot) => String(robot.id) === String(robotId));
+  }
+
   router.post("/register", async (req, res) => {
     try {
       const body = req.body || {};
@@ -108,6 +114,54 @@ function createDevicesRoutes(services) {
     }));
 
     res.json({ ok: true, data: robots });
+  });
+
+  router.post("/robots/:robotId/pause", (req, res) => {
+    const robotId = String(req.params.robotId || "").trim();
+    if (!robotId) {
+      res.status(400).json({ ok: false, error: "robotId es obligatorio" });
+      return;
+    }
+
+    const robot = getRobotById(robotId);
+    if (!robot) {
+      res.status(404).json({ ok: false, error: "Robot no encontrado" });
+      return;
+    }
+
+    const updated = services.stateManager.upsertRobot({
+      ...robot,
+      id: robotId,
+      enabled: false,
+      status: "PAUSED",
+    });
+
+    res.json({ ok: true, data: updated });
+  });
+
+  router.post("/robots/:robotId/resume", (req, res) => {
+    const robotId = String(req.params.robotId || "").trim();
+    if (!robotId) {
+      res.status(400).json({ ok: false, error: "robotId es obligatorio" });
+      return;
+    }
+
+    const robot = getRobotById(robotId);
+    if (!robot) {
+      res.status(404).json({ ok: false, error: "Robot no encontrado" });
+      return;
+    }
+
+    const queueState = services.queueManager.ensureRobot(robotId);
+    const resumedStatus = queueState.activeOrderId ? "BUSY" : "IDLE";
+    const updated = services.stateManager.upsertRobot({
+      ...robot,
+      id: robotId,
+      enabled: true,
+      status: resumedStatus,
+    });
+
+    res.json({ ok: true, data: updated });
   });
 
   router.post("/:robotId/:type/command", async (req, res) => {

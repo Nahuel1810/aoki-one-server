@@ -307,6 +307,43 @@
         font-size: 13px;
       }
 
+      .signals {
+        margin-top: 10px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        padding: 8px;
+        background: #fbfdf9;
+        display: grid;
+        gap: 7px;
+      }
+
+      .signal-title {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
+      .signal-row {
+        display: grid;
+        grid-template-columns: 78px repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        align-items: center;
+      }
+
+      .signal-row strong {
+        font-size: 12px;
+      }
+
+      .signal-pill {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        color: var(--ink);
+        background: #fff;
+      }
+
       .slot-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -509,6 +546,7 @@
         devices: [],
         orders: [],
         slots: [],
+        deviceSignals: {},
         filter: {
           estanteria: "ALL",
           robotId: "ALL",
@@ -520,6 +558,7 @@
       const orderStatus = document.getElementById("orderStatus");
 
       function statusClassByRobot(robot) {
+        if (robot.enabled === false) return "status-muted";
         if (robot.status === "ERROR") return "status-err";
         if (robot.status === "BUSY") return "status-warn";
         return "status-ok";
@@ -549,6 +588,31 @@
       function showStatus(target, ok, message) {
         target.textContent = message;
         target.style.color = ok ? "var(--ok)" : "var(--danger)";
+      }
+
+      async function fetchSignalsByRobot(robots) {
+        const targets = [];
+
+        for (const robot of robots || []) {
+          const robotId = String(robot.id || "").trim();
+          if (!robotId) continue;
+
+          targets.push({ robotId, type: "CARRO" });
+          targets.push({ robotId, type: "ELEVADOR" });
+        }
+
+        const entries = await Promise.all(
+          targets.map(async (target) => {
+            try {
+              const data = await apiJson(`/api/devices/${encodeURIComponent(target.robotId)}/${target.type.toLowerCase()}/state`);
+              return [`${target.robotId}:${target.type}`, data];
+            } catch {
+              return [`${target.robotId}:${target.type}`, null];
+            }
+          })
+        );
+
+        return Object.fromEntries(entries);
       }
 
       function estanteriaFromCode(code) {
@@ -605,6 +669,7 @@
           appState.devices = Array.isArray(devices) ? devices : [];
           appState.orders = Array.isArray(orders) ? orders : [];
           appState.slots = Array.isArray(slots) ? slots : [];
+          appState.deviceSignals = await fetchSignalsByRobot(appState.robots);
 
           renderKpis();
           renderFilters();
@@ -646,16 +711,59 @@
             const devices = robot.devices || [];
             const connected = devices.filter((d) => d.status === "CONNECTED").length;
             const total = devices.length;
+            const isPaused = robot.enabled === false;
+            const robotStatusLabel = isPaused ? "PAUSED" : (robot.status || "IDLE");
+            const carroSignal = appState.deviceSignals[`${robot.id}:CARRO`] || null;
+            const elevadorSignal = appState.deviceSignals[`${robot.id}:ELEVADOR`] || null;
+
+            const signalMarkup = (label, signal) => {
+              if (!signal || !signal.values) {
+                return `
+                  <div class="signal-row">
+                    <strong>${asSafe(label)}</strong>
+                    <span class="signal-pill">IN1: -</span>
+                    <span class="signal-pill">IN2: -</span>
+                    <span class="signal-pill">OUT: -</span>
+                  </div>
+                `;
+              }
+
+              return `
+                <div class="signal-row">
+                  <strong>${asSafe(label)}</strong>
+                  <span class="signal-pill">IN1: ${asSafe(signal.values.messageIn1 ?? "-")}</span>
+                  <span class="signal-pill">IN2: ${asSafe(signal.values.messageIn2 ?? "-")}</span>
+                  <span class="signal-pill">OUT: ${asSafe(signal.values.messageOut ?? "-")}</span>
+                </div>
+              `;
+            };
+
             return `
               <article class="robot-item">
                 <div class="robot-top">
                   <strong>Robot ${asSafe(robot.id)}</strong>
-                  <span class="status-pill ${statusClassByRobot(robot)}">${asSafe(robot.status || "IDLE")}</span>
+                  <span class="status-pill ${statusClassByRobot(robot)}">${asSafe(robotStatusLabel)}</span>
                 </div>
                 <div class="device-meta">
                   <div>Pedido actual: ${asSafe(robot.currentOrderId || "Sin pedido activo")}</div>
                   <div>Dispositivos conectados: ${connected}/${total}</div>
+                  <div>Ejecución automática: ${isPaused ? "PAUSADA" : "ACTIVA"}</div>
                   <div>Actualizado: hace ${timeAgo(robot.updatedAt)}</div>
+                </div>
+                <div class="signals">
+                  <div class="signal-title">Visualizador en tiempo real (Mensaje IN/OUT)</div>
+                  ${signalMarkup("CARRO", carroSignal)}
+                  ${signalMarkup("ELEVADOR", elevadorSignal)}
+                </div>
+                <div class="actions">
+                  <button
+                    type="button"
+                    class="ghost"
+                    data-action="${isPaused ? "resume-robot" : "pause-robot"}"
+                    data-robot="${asSafe(robot.id)}"
+                  >
+                    ${isPaused ? "Reanudar cola" : "Pausar cola"}
+                  </button>
                 </div>
               </article>
             `;
@@ -897,6 +1005,21 @@
         }
       }
 
+      async function handleRobotExecution(action, robotId) {
+        const endpoint = action === "pause-robot"
+          ? `/api/devices/robots/${encodeURIComponent(robotId)}/pause`
+          : `/api/devices/robots/${encodeURIComponent(robotId)}/resume`;
+        const verb = action === "pause-robot" ? "pausada" : "reanudada";
+
+        try {
+          await apiJson(endpoint, { method: "POST" });
+          showStatus(orderStatus, true, `Cola del robot ${robotId} ${verb}.`);
+          await refreshAll();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
+      }
+
       async function handleSlotRelease(slotCode) {
         try {
           await apiJson(`/api/slots/${encodeURIComponent(slotCode)}/release`, { method: "POST" });
@@ -950,6 +1073,10 @@
           const action = button.dataset.action;
           if (action === "retry" || action === "cancel") {
             await handleOrderAction(action, button.dataset.id);
+          }
+
+          if (action === "pause-robot" || action === "resume-robot") {
+            await handleRobotExecution(action, button.dataset.robot);
           }
 
           if (action === "release-slot") {

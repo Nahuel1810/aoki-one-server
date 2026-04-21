@@ -278,6 +278,52 @@ class ConnectionService {
     await client.writeSingleRegister(commandAddress, 0);
   }
 
+  isNetworkTimeoutError(error) {
+    const message = String(error?.message || "").toLowerCase();
+    const code = String(error?.code || "").toUpperCase();
+    return (
+      message.includes("timeout") ||
+      message.includes("timed out") ||
+      code === "ETIMEDOUT" ||
+      code === "ESOCKETTIMEDOUT"
+    );
+  }
+
+  async isMessageInReset(client, deviceType, commandAddress) {
+    const normalizedType = String(deviceType).toUpperCase();
+
+    if (normalizedType === "CARRO") {
+      const values = await client.readHoldingRegisters(commandAddress, 2);
+      return Number(values?.[0] ?? null) === 0 && Number(values?.[1] ?? null) === 0;
+    }
+
+    const values = await client.readHoldingRegisters(commandAddress, 1);
+    return Number(values?.[0] ?? null) === 0;
+  }
+
+  async resetMessageInWithVerification(client, deviceType, commandAddress) {
+    try {
+      await this.writeResetMessageIn(client, deviceType, commandAddress);
+      return { ok: true, verifiedAfterTimeout: false };
+    } catch (error) {
+      if (!this.isNetworkTimeoutError(error)) {
+        throw error;
+      }
+
+      const resetConfirmed = await this.isMessageInReset(client, deviceType, commandAddress).catch(() => false);
+      if (resetConfirmed) {
+        this.logger.warn?.("[connection] messageIn reset write timeout but state is already zero", {
+          deviceType,
+          commandAddress,
+          error: error.message,
+        });
+        return { ok: true, verifiedAfterTimeout: true };
+      }
+
+      throw error;
+    }
+  }
+
   async waitForMessageOutZero(client, responseAddress) {
     const attempts = Number(process.env.STEP_RESET_MAX_ATTEMPTS || 10);
     const intervalMs = Number(process.env.STEP_RESET_INTERVAL_MS || 100);
@@ -328,7 +374,7 @@ class ConnectionService {
     };
 
     try {
-      await this.writeResetMessageIn(client, device.type, commandAddress);
+      await this.resetMessageInWithVerification(client, device.type, commandAddress);
       result.messageInReset = true;
     } catch (error) {
       result.error = `No se pudo resetear messageIn: ${error.message}`;
@@ -372,7 +418,7 @@ class ConnectionService {
         if (!this.simulate) {
           const client = await this.getClient(device);
           const commandAddress = this.resolveRegister(device, "messageIn");
-          await this.writeResetMessageIn(client, device.type, commandAddress);
+          await this.resetMessageInWithVerification(client, device.type, commandAddress);
         }
 
         result.reset += 1;
@@ -425,6 +471,14 @@ class ConnectionService {
     const commandAddress = this.resolveRegister(device, "messageIn", command.address);
     const responseAddress = this.resolveRegister(device, "messageOut", command.responseAddress);
 
+    try {
+      await this.resetMessageInWithVerification(client, device.type, commandAddress);
+    } catch (error) {
+      const preResetError = new Error(`No se pudo resetear messageIn al inicio de maniobra: ${error.message}`);
+      preResetError.fatal = true;
+      throw preResetError;
+    }
+
     this.logger.info?.("[connection] sending plc command", {
       robotId,
       deviceType: device.type,
@@ -441,10 +495,32 @@ class ConnectionService {
         high,
         low,
       });
-      await client.writeSingleRegister(commandAddress, high);
-      await client.writeSingleRegister(commandAddress + 1, low);
+
+      try {
+        await client.writeSingleRegister(commandAddress, high);
+        await client.writeSingleRegister(commandAddress + 1, low);
+      } catch (error) {
+        await this.resetMessageInWithVerification(client, device.type, commandAddress).catch((rollbackError) => {
+          this.logger.warn?.("[connection] rollback failed after partial CARRO write", {
+            robotId,
+            step: step.type,
+            error: rollbackError.message,
+          });
+        });
+
+        const writeError = new Error(`No se pudo escribir comando CARRO completo: ${error.message}`);
+        writeError.fatal = false;
+        throw writeError;
+      }
     } else {
-      await client.writeSingleRegister(commandAddress, Number(command.value));
+      const commandValue = Number(command.value);
+      if (!Number.isFinite(commandValue)) {
+        const commandError = new Error(`Comando invalido para ${device.type}: ${command.value}`);
+        commandError.fatal = true;
+        throw commandError;
+      }
+
+      await client.writeSingleRegister(commandAddress, commandValue);
     }
 
     const ackResult = await this.waitForExpectedResponse(
@@ -593,6 +669,30 @@ class ConnectionService {
 
     const outValues = await client.readInputRegisters(messageOutAddress, 1);
     const messageOut = outValues[0] ?? null;
+
+    const messageOutOk = Number(messageOut) === 100;
+    const messageInNeedsReset =
+      deviceType === "CARRO"
+        ? Number(messageIn1) !== 0 || Number(messageIn2) !== 0
+        : Number(messageIn1) !== 0;
+
+    if (messageOutOk && messageInNeedsReset) {
+      try {
+        await this.resetMessageInWithVerification(client, device.type, messageInAddress);
+        const refreshedInValues = await client.readHoldingRegisters(messageInAddress, deviceType === "CARRO" ? 2 : 1);
+        messageIn1 = refreshedInValues[0] ?? null;
+        messageIn2 = deviceType === "CARRO" ? refreshedInValues[1] ?? null : null;
+      } catch (error) {
+        this.logger.warn?.("[connection] failed to auto-reset messageIn on state read", {
+          robotId,
+          deviceType,
+          messageOut,
+          messageIn1,
+          messageIn2,
+          error: error.message,
+        });
+      }
+    }
 
     return {
       robotId: String(robotId),
