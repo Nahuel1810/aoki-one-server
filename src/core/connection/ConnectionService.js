@@ -16,7 +16,17 @@ class ConnectionService {
       options.connectionTimeoutMs ||
       options.heartbeatTimeoutMs ||
       Number(process.env.CONNECTION_TIMEOUT_MS || process.env.HEARTBEAT_TIMEOUT_MS || 3000);
+    this.recreateClientAfterFailures =
+      Number(options.recreateClientAfterFailures) ||
+      Number(process.env.CONNECTION_RECREATE_CLIENT_AFTER_FAILURES || 5);
+    this.reconnectBackoffBaseMs =
+      Number(options.reconnectBackoffBaseMs) ||
+      Number(process.env.CONNECTION_RETRY_BACKOFF_BASE_MS || 2000);
+    this.reconnectBackoffMaxMs =
+      Number(options.reconnectBackoffMaxMs) ||
+      Number(process.env.CONNECTION_RETRY_BACKOFF_MAX_MS || 30000);
     this.clients = new Map();
+    this.connectionRecovery = new Map();
     this.monitorTimer = null;
   }
 
@@ -81,6 +91,59 @@ class ConnectionService {
     }
 
     return this.clients.get(key);
+  }
+
+  getRecoveryState(robotId, type) {
+    const key = this.deviceKey(robotId, type);
+    if (!this.connectionRecovery.has(key)) {
+      this.connectionRecovery.set(key, {
+        consecutiveFailures: 0,
+        nextRetryAt: 0,
+        lastError: null,
+      });
+    }
+
+    return this.connectionRecovery.get(key);
+  }
+
+  clearRecoveryState(robotId, type) {
+    const state = this.getRecoveryState(robotId, type);
+    state.consecutiveFailures = 0;
+    state.nextRetryAt = 0;
+    state.lastError = null;
+  }
+
+  calculateBackoffMs(consecutiveFailures) {
+    const exponent = Math.max(0, Number(consecutiveFailures) - 1);
+    const delay = this.reconnectBackoffBaseMs * 2 ** exponent;
+    return Math.min(delay, this.reconnectBackoffMaxMs);
+  }
+
+  registerConnectionFailure(robotId, type, error) {
+    const state = this.getRecoveryState(robotId, type);
+    state.consecutiveFailures += 1;
+    state.lastError = error?.message || String(error || "unknown");
+    state.nextRetryAt = Date.now() + this.calculateBackoffMs(state.consecutiveFailures);
+    return state;
+  }
+
+  async recreateClient(device) {
+    const key = this.deviceKey(device.robotId, device.type);
+    const currentClient = this.clients.get(key);
+
+    if (currentClient) {
+      try {
+        await currentClient.disconnect?.();
+      } catch (error) {
+        this.logger.warn?.("[connection] failed to disconnect stale client", {
+          robotId: device.robotId,
+          type: device.type,
+          error: error.message,
+        });
+      }
+    }
+
+    this.clients.delete(key);
   }
 
   startMonitoring() {
@@ -164,8 +227,40 @@ class ConnectionService {
     const devices = this.deviceRegistry.listByRobot(robotId);
 
     for (const device of devices) {
+      const recovery = this.getRecoveryState(robotId, device.type);
+
+      if (!this.simulate && recovery.nextRetryAt > Date.now()) {
+        const waitMs = recovery.nextRetryAt - Date.now();
+        this.logger.info?.("[connection] retry delayed by backoff", {
+          robotId,
+          type: device.type,
+          waitMs,
+          consecutiveFailures: recovery.consecutiveFailures,
+        });
+
+        this.deviceRegistry.updateStatus(robotId, device.type, "DISCONNECTED", {
+          lastResponse: {
+            error: recovery.lastError || "retry delayed by backoff",
+            retryInMs: waitMs,
+            consecutiveFailures: recovery.consecutiveFailures,
+          },
+        });
+        this.stateManager.upsertDevice({
+          ...device,
+          status: "DISCONNECTED",
+          lastSeen: device.lastSeen,
+          lastResponse: {
+            error: recovery.lastError || "retry delayed by backoff",
+            retryInMs: waitMs,
+            consecutiveFailures: recovery.consecutiveFailures,
+          },
+        });
+        continue;
+      }
+
       try {
         if (this.simulate) {
+          this.clearRecoveryState(robotId, device.type);
           this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED");
           this.stateManager.upsertDevice({
             ...device,
@@ -178,6 +273,7 @@ class ConnectionService {
 
         const client = await this.getClient(device);
         await client.ensureConnected();
+        this.clearRecoveryState(robotId, device.type);
         this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
           lastResponse: { connected: true },
         });
@@ -194,23 +290,38 @@ class ConnectionService {
           error: error.message,
         });
 
+        const failure = this.registerConnectionFailure(robotId, device.type, error);
+        const shouldRecreateClient =
+          !this.simulate &&
+          this.recreateClientAfterFailures > 0 &&
+          failure.consecutiveFailures % this.recreateClientAfterFailures === 0;
+
+        if (shouldRecreateClient) {
+          await this.recreateClient(device);
+          this.logger.warn("[connection] client recreated after repeated failures", {
+            robotId,
+            type: device.type,
+            consecutiveFailures: failure.consecutiveFailures,
+          });
+        }
+
         this.deviceRegistry.updateStatus(robotId, device.type, "DISCONNECTED", {
-          lastResponse: { error: error.message },
+          lastResponse: {
+            error: error.message,
+            retryInMs: Math.max(0, failure.nextRetryAt - Date.now()),
+            consecutiveFailures: failure.consecutiveFailures,
+          },
         });
         this.stateManager.upsertDevice({
           ...device,
           status: "DISCONNECTED",
           lastSeen: device.lastSeen,
-          lastResponse: { error: error.message },
+          lastResponse: {
+            error: error.message,
+            retryInMs: Math.max(0, failure.nextRetryAt - Date.now()),
+            consecutiveFailures: failure.consecutiveFailures,
+          },
         });
-
-        if (!this.simulate) {
-          try {
-            await this.connectDevice(device);
-          } catch {
-            // Ignore reconnect error here; monitor loop will keep retrying.
-          }
-        }
       }
 
       const latest = this.getDevice(robotId, device.type);
@@ -279,8 +390,8 @@ class ConnectionService {
   }
 
   async waitForMessageOutZero(client, responseAddress) {
-    const attempts = Number(process.env.STEP_RESET_MAX_ATTEMPTS || 10);
-    const intervalMs = Number(process.env.STEP_RESET_INTERVAL_MS || 100);
+    const attempts = Number(process.env.STEP_RESET_MAX_ATTEMPTS || 60);
+    const intervalMs = Number(process.env.STEP_RESET_INTERVAL_MS || 2500);
     let lastValue = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -300,8 +411,8 @@ class ConnectionService {
   }
 
   async waitForExpectedResponse(client, responseAddress, expectedResponses = [100]) {
-    const attempts = Number(process.env.STEP_ACK_MAX_ATTEMPTS || 10);
-    const intervalMs = Number(process.env.STEP_ACK_INTERVAL_MS || 100);
+    const attempts = Number(process.env.STEP_ACK_MAX_ATTEMPTS || 60);
+    const intervalMs = Number(process.env.STEP_ACK_INTERVAL_MS || 2000);
     let lastValue = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {

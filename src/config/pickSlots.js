@@ -2,11 +2,20 @@ const { parseLocationCode } = require("../core/orchestrator/locationTranslator")
 
 const DEFAULT_PICK_SLOTS = [
   "3X02AE1",
-  "3X02AE2",
-  "3X02AE3",
+  "3X02AC1",
+  "3X02AA1",
+
   "3X01AE1",
   "3X01AE2",
   "3X01AE3",
+
+  "3X01AC1",
+  "3X01AC2",
+  "3X01AC3",
+
+  "3X01AA1",
+  "3X01AA2",
+  "3X01AA3",
 ];
 
 function normalizeUniqueSlots(locationCodes = []) {
