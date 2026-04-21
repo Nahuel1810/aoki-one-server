@@ -75,11 +75,11 @@ test("ConnectionService resetea messageIn1 y messageIn2 para CARRO", async () =>
   ]);
 });
 
-test("ConnectionService espera OUT=100 antes de resetear en ELEVADOR", async () => {
+test("ConnectionService espera OUT!=0 antes de resetear en ELEVADOR", async () => {
   const service = createServiceWithDevice({ type: "ELEVADOR" });
 
   const writes = [];
-  const readSequence = [0, 100, 100, 0];
+  const readSequence = [0, 0, 100, 0];
   const client = {
     async writeSingleRegister(address, value) {
       writes.push({ address, value });
@@ -99,6 +99,42 @@ test("ConnectionService espera OUT=100 antes de resetear en ELEVADOR", async () 
   });
 
   assert.equal(response.ack, "DONE");
+  assert.equal(response.raw.reset.messageInReset, true);
+  assert.equal(response.raw.reset.messageOutReset, true);
+
+  assert.deepEqual(writes, [
+    { address: 0, value: 0 },
+    { address: 0, value: 107 },
+    { address: 0, value: 0 },
+  ]);
+});
+
+test("ConnectionService resetea messageIn aunque OUT sea error", async () => {
+  const service = createServiceWithDevice({ type: "ELEVADOR" });
+
+  const writes = [];
+  const readSequence = [0, 199, 0];
+  const client = {
+    async writeSingleRegister(address, value) {
+      writes.push({ address, value });
+    },
+    async readInputRegisters() {
+      const value = readSequence.length > 0 ? readSequence.shift() : 0;
+      return [value];
+    },
+  };
+
+  service.getClient = async () => client;
+
+  const response = await service.executeStepCommand({
+    robotId: "1",
+    step: { type: "ELEVADOR", deviceType: "ELEVADOR" },
+    command: { value: 107, expectedResponses: [100] },
+  });
+
+  assert.equal(response.ack, "ERROR");
+  assert.equal(response.stateOk, false);
+  assert.equal(response.raw.responseCode, 199);
   assert.equal(response.raw.reset.messageInReset, true);
   assert.equal(response.raw.reset.messageOutReset, true);
 

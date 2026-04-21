@@ -130,6 +130,41 @@ test("Orchestrator no reintenta cuando PLC responde error 99", async () => {
   assert.equal(fakeConnection.calls.length, 1);
 });
 
+test("Orchestrator pausa robot ante error PLC 199", async () => {
+  const fakeConnection = createFakeConnectionService({
+    plan: [
+      {
+        ack: "ERROR",
+        stateOk: false,
+        raw: {
+          responseCode: 199,
+          decoded: { kind: "ERROR", errorCode: 99, ok: false, message: "No logro recuperarse" },
+        },
+      },
+    ],
+  });
+
+  const { orchestrator, stateManager, queueManager } = buildOrchestrator(fakeConnection, { maxRetries: 3 });
+  const order = orchestrator.submitOrder({
+    type: "PICK",
+    robotId: "9",
+    locationCode: "3X04AA3",
+    slotLocationCode: "3X02AE1",
+  });
+
+  queueManager.setActive("9", order.id);
+  await orchestrator.processOrder("9", order.id);
+
+  const robot = stateManager.listRobots().find((item) => item.id === "9");
+  const updatedOrder = stateManager.getOrder(order.id);
+
+  assert.equal(updatedOrder.status, "ERROR");
+  assert.equal(updatedOrder.errorReason, "No logro recuperarse");
+  assert.equal(robot.status, "PAUSED");
+  assert.equal(robot.enabled, false);
+  assert.equal(queueManager.isRobotBusy("9"), false);
+});
+
 test("Orchestrator rehidrata snapshot y reencola ordenes pendientes", () => {
   const fakeConnection = createFakeConnectionService();
   const { orchestrator, queueManager, stateManager } = buildOrchestrator(fakeConnection);

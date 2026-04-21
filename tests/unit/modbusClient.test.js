@@ -95,3 +95,93 @@ test("ModbusClient recrea cliente cuando una operacion se cuelga mas del timeout
 
   assert.equal(creations, 2);
 });
+
+test("ModbusClient propaga ECONNREFUSED luego de agotar reintentos", async () => {
+  let creations = 0;
+  const clientFactory = () => {
+    creations += 1;
+    return {
+      async connectTCP() {
+        const error = new Error("connect ECONNREFUSED 127.0.0.1:502");
+        error.code = "ECONNREFUSED";
+        throw error;
+      },
+      setID() {},
+      setTimeout() {},
+      close(callback) {
+        if (typeof callback === "function") {
+          callback();
+        }
+      },
+      async writeRegister() {},
+      async readHoldingRegisters() {
+        return { data: [0] };
+      },
+      async readInputRegisters() {
+        return { data: [0] };
+      },
+    };
+  };
+
+  const client = new ModbusClient({
+    host: "127.0.0.1",
+    port: 502,
+    unitId: 1,
+    retryAttempts: 2,
+    retryBackoffMs: 0,
+    operationTimeoutMs: 50,
+    clientFactory,
+  });
+
+  await assert.rejects(() => client.writeSingleRegister(0, 107), (error) => {
+    assert.equal(error.code, "ECONNREFUSED");
+    return true;
+  });
+
+  assert.equal(creations, 3);
+});
+
+test("ModbusClient corta conexion colgada por operation timeout", async () => {
+  let creations = 0;
+  const clientFactory = () => {
+    creations += 1;
+
+    if (creations === 1) {
+      return {
+        async connectTCP() {
+          return new Promise(() => {});
+        },
+        setID() {},
+        setTimeout() {},
+        close(callback) {
+          if (typeof callback === "function") {
+            callback();
+          }
+        },
+        async writeRegister() {},
+        async readHoldingRegisters() {
+          return { data: [0] };
+        },
+        async readInputRegisters() {
+          return { data: [0] };
+        },
+      };
+    }
+
+    return createUnderlyingClient({ failWrite: false });
+  };
+
+  const client = new ModbusClient({
+    host: "127.0.0.1",
+    port: 502,
+    unitId: 1,
+    retryAttempts: 2,
+    retryBackoffMs: 0,
+    operationTimeoutMs: 30,
+    clientFactory,
+  });
+
+  await client.writeSingleRegister(0, 107);
+
+  assert.equal(creations, 2);
+});

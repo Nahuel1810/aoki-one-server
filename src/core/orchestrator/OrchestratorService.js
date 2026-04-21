@@ -331,6 +331,8 @@ class OrchestratorService {
 
     const executed = await this.executeStepWithRetry(order, currentStep);
     if (!executed.ok) {
+      const shouldPauseRobot = Number(executed.error?.errorCode) === 99;
+
       if (order.slotLocationCode) {
         this.stateManager.blockSlot(order.slotLocationCode, executed.error?.message || "step failed", order.id);
         this.eventStore.append({
@@ -350,7 +352,12 @@ class OrchestratorService {
         error: executed.error?.message,
       });
       this.queueManager.clearActive(robotId);
-      this.stateManager.upsertRobot({ id: robotId, status: "ERROR", currentOrderId: null });
+      this.stateManager.upsertRobot({
+        id: robotId,
+        status: shouldPauseRobot ? "PAUSED" : "ERROR",
+        enabled: shouldPauseRobot ? false : true,
+        currentOrderId: null,
+      });
       this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
     }

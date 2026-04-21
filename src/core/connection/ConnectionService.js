@@ -345,7 +345,7 @@ class ConnectionService {
     return { ok: false, lastValue, attempts };
   }
 
-  async waitForExpectedResponse(client, responseAddress, expectedResponses = [100]) {
+  async waitForFirstNonZeroResponse(client, responseAddress) {
     const attempts = Number(process.env.STEP_ACK_MAX_ATTEMPTS || 10);
     const intervalMs = Number(process.env.STEP_ACK_INTERVAL_MS || 100);
     let lastValue = null;
@@ -354,7 +354,7 @@ class ConnectionService {
       const values = await client.readInputRegisters(responseAddress, 1);
       lastValue = values[0] ?? null;
 
-      if (this.matchesExpectedResponse(lastValue, expectedResponses)) {
+      if (Number(lastValue) !== 0) {
         return { ok: true, responseCode: lastValue, attempts: attempt };
       }
 
@@ -523,11 +523,7 @@ class ConnectionService {
       await client.writeSingleRegister(commandAddress, commandValue);
     }
 
-    const ackResult = await this.waitForExpectedResponse(
-      client,
-      responseAddress,
-      command.expectedResponses || [100]
-    );
+    const ackResult = await this.waitForFirstNonZeroResponse(client, responseAddress);
     const responseCode = ackResult.responseCode;
     this.logger.info?.("[connection] plc response", {
       robotId,
@@ -538,11 +534,10 @@ class ConnectionService {
     });
 
     const decoded = decodeResponse(responseCode);
-    const responseOk = ackResult.ok;
-    const stateOk = responseOk;
+    const stateOk = this.matchesExpectedResponse(responseCode, command.expectedResponses || [100]);
 
     let reset = null;
-    if (stateOk) {
+    if (ackResult.ok) {
       reset = await this.resetStepRegisters({
         client,
         device,
@@ -554,7 +549,7 @@ class ConnectionService {
 
       if (!reset.messageInReset || !reset.messageOutReset) {
         const resetError = new Error(
-          `Step confirmado pero reset incompleto (messageInReset=${reset.messageInReset}, messageOutReset=${reset.messageOutReset}, lastMessageOut=${reset.lastMessageOut})`
+          `Step respondido pero reset incompleto (messageInReset=${reset.messageInReset}, messageOutReset=${reset.messageOutReset}, lastMessageOut=${reset.lastMessageOut})`
         );
         resetError.fatal = true;
         throw resetError;

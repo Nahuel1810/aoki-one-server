@@ -6,7 +6,7 @@ class ModbusClient {
     this.port = options.port || 502;
     this.unitId = options.unitId || 1;
     this.timeoutMs = options.timeoutMs || 2000;
-    this.operationTimeoutMs = 15000;
+    this.operationTimeoutMs = options.operationTimeoutMs || 15000;
     this.retryAttempts = options.retryAttempts || 3;
     this.retryBackoffMs = options.retryBackoffMs || 300;
     this.clientFactory = options.clientFactory || (() => new ModbusRTU());
