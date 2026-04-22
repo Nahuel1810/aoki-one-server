@@ -73,7 +73,7 @@ Registro de dispositivo:
   "type": "CARRO",
   "host": "192.168.1.50",
   "port": 502,
-  "unitId": 1,
+  "unitId": 255,
   "registerMap": {
     "messageIn": 0,
     "messageOut": 1

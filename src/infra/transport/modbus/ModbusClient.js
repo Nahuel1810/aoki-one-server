@@ -4,16 +4,10 @@ class ModbusClient {
   constructor(options) {
     this.host = options.host;
     this.port = options.port || 502;
-    this.unitId = options.unitId || 1;
+    this.unitId = options.unitId || 255;
     this.timeoutMs = options.timeoutMs || 2000;
-    this.retryAttempts = options.retryAttempts || 3;
-    this.retryBackoffMs = options.retryBackoffMs || 300;
     this.client = new ModbusRTU();
     this.connected = false;
-  }
-
-  async sleep(ms) {
-    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   markDisconnected() {
@@ -48,46 +42,21 @@ class ModbusClient {
     await this.connect();
   }
 
-  async runWithRetry(action) {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
-      try {
-        await this.ensureConnected();
-        return await action();
-      } catch (error) {
-        lastError = error;
-        this.markDisconnected();
-
-        if (attempt >= this.retryAttempts) {
-          throw error;
-        }
-
-        await this.sleep(this.retryBackoffMs * attempt);
-      }
-    }
-
-    throw lastError || new Error("Operacion Modbus fallo");
-  }
-
   async writeSingleRegister(address, value) {
-    await this.runWithRetry(async () => {
-      await this.client.writeRegister(address, value);
-    });
+    await this.ensureConnected();
+    await this.client.writeRegister(address, value);
   }
 
   async readHoldingRegisters(address, length = 1) {
-    return this.runWithRetry(async () => {
-      const data = await this.client.readHoldingRegisters(address, length);
-      return data?.data || [];
-    });
+    await this.ensureConnected();
+    const data = await this.client.readHoldingRegisters(address, length);
+    return data?.data || [];
   }
 
   async readInputRegisters(address, length = 1) {
-    return this.runWithRetry(async () => {
-      const data = await this.client.readInputRegisters(address, length);
-      return data?.data || [];
-    });
+    await this.ensureConnected();
+    const data = await this.client.readInputRegisters(address, length);
+    return data?.data || [];
   }
 }
 

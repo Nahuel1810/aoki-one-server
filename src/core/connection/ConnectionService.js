@@ -1,4 +1,5 @@
 const { ModbusClient } = require("../../infra/transport/modbus/ModbusClient");
+const { isConnectivityError } = require("../../infra/transport/modbus/modbusConnectivity");
 const { decodeResponse } = require("../../config/plcProtocol");
 const { mergeRegisterMaps } = require("../../config/deviceRegisterMaps");
 
@@ -82,10 +83,8 @@ class ConnectionService {
         new ModbusClient({
           host: device.host,
           port: device.port || 502,
-          unitId: device.unitId || 1,
+          unitId: device.unitId || 255,
           timeoutMs: device.timeoutMs || 2000,
-          retryAttempts: Number(process.env.MODBUS_RETRY_ATTEMPTS || 3),
-          retryBackoffMs: Number(process.env.MODBUS_RETRY_BACKOFF_MS || 300),
         })
       );
     }
@@ -211,7 +210,7 @@ class ConnectionService {
       type: device.type,
       host: device.host,
       port: device.port || 502,
-      unitId: device.unitId || 1,
+      unitId: device.unitId || 255,
     });
     const client = await this.getClient(device);
     await client.connect();
@@ -379,23 +378,98 @@ class ConnectionService {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async writeResetMessageIn(client, deviceType, commandAddress) {
-    if (String(deviceType).toUpperCase() === "CARRO") {
-      await client.writeSingleRegister(commandAddress, 0);
-      await client.writeSingleRegister(commandAddress + 1, 0);
-      return;
-    }
-
-    await client.writeSingleRegister(commandAddress, 0);
+  notifyModbusConnectivityIssue(device, error) {
+    const robotId = device.robotId;
+    const type = device.type;
+    const message = error?.message || String(error);
+    const latest = this.getDevice(robotId, type) || device;
+    this.deviceRegistry.updateStatus(robotId, type, "DISCONNECTED", {
+      lastResponse: {
+        error: message,
+        connectivityRecovery: true,
+      },
+    });
+    this.stateManager.upsertDevice({
+      ...latest,
+      status: "DISCONNECTED",
+      lastSeen: latest.lastSeen,
+      lastResponse: {
+        error: message,
+        connectivityRecovery: true,
+      },
+    });
   }
 
-  async waitForMessageOutZero(client, responseAddress) {
+  /**
+   * Ejecuta una operación Modbus reintentando ante errores de conectividad:
+   * hasta 3 intentos con 2 s entre ellos, luego recrea el cliente y repite hasta éxito.
+   */
+  async runModbusOp(device, operation) {
+    if (this.simulate) {
+      throw new Error("runModbusOp no aplica en modo simulacion");
+    }
+
+    const innerAttempts = Number(process.env.MODBUS_CONNECTIVITY_INNER_ATTEMPTS || 3);
+    const innerDelayMs = Number(process.env.MODBUS_CONNECTIVITY_INNER_DELAY_MS || 2000);
+
+    while (true) {
+      for (let i = 1; i <= innerAttempts; i += 1) {
+        const client = await this.getClient(device);
+        try {
+          await client.ensureConnected();
+          const result = await operation(client);
+          this.clearRecoveryState(device.robotId, device.type);
+          return result;
+        } catch (error) {
+          if (!isConnectivityError(error)) {
+            throw error;
+          }
+          client.markDisconnected();
+          this.notifyModbusConnectivityIssue(device, error);
+          this.logger.warn?.("[connection] modbus connectivity error, retrying", {
+            robotId: device.robotId,
+            type: device.type,
+            attempt: i,
+            innerAttempts,
+            message: error.message,
+          });
+          if (i < innerAttempts) {
+            await this.sleep(innerDelayMs);
+          }
+        }
+      }
+
+      const client = await this.getClient(device);
+      client.markDisconnected();
+      await this.recreateClient(device);
+      this.logger.warn?.("[connection] modbus client recreated after connectivity errors", {
+        robotId: device.robotId,
+        type: device.type,
+      });
+    }
+  }
+
+  async writeResetMessageIn(device, deviceType, commandAddress) {
+    await this.runModbusOp(device, async (client) => {
+      if (String(deviceType).toUpperCase() === "CARRO") {
+        await client.writeSingleRegister(commandAddress, 0);
+        await client.writeSingleRegister(commandAddress + 1, 0);
+        return;
+      }
+
+      await client.writeSingleRegister(commandAddress, 0);
+    });
+  }
+
+  async waitForMessageOutZero(device, responseAddress) {
     const attempts = Number(process.env.STEP_RESET_MAX_ATTEMPTS || 60);
     const intervalMs = Number(process.env.STEP_RESET_INTERVAL_MS || 2500);
     let lastValue = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const values = await client.readInputRegisters(responseAddress, 1);
+      const values = await this.runModbusOp(device, (client) =>
+        client.readInputRegisters(responseAddress, 1)
+      );
       lastValue = values[0] ?? null;
 
       if (Number(lastValue) === 0) {
@@ -410,13 +484,15 @@ class ConnectionService {
     return { ok: false, lastValue, attempts };
   }
 
-  async waitForExpectedResponse(client, responseAddress, expectedResponses = [100]) {
+  async waitForExpectedResponse(device, responseAddress, expectedResponses = [100]) {
     const attempts = Number(process.env.STEP_ACK_MAX_ATTEMPTS || 60);
     const intervalMs = Number(process.env.STEP_ACK_INTERVAL_MS || 2000);
     let lastValue = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const values = await client.readInputRegisters(responseAddress, 1);
+      const values = await this.runModbusOp(device, (client) =>
+        client.readInputRegisters(responseAddress, 1)
+      );
       lastValue = values[0] ?? null;
 
       if (this.matchesExpectedResponse(lastValue, expectedResponses)) {
@@ -431,7 +507,7 @@ class ConnectionService {
     return { ok: false, responseCode: lastValue, attempts };
   }
 
-  async resetStepRegisters({ client, device, commandAddress, responseAddress, robotId, stepType }) {
+  async resetStepRegisters({ device, commandAddress, responseAddress, robotId, stepType }) {
     const result = {
       messageInReset: false,
       messageOutReset: false,
@@ -439,7 +515,7 @@ class ConnectionService {
     };
 
     try {
-      await this.writeResetMessageIn(client, device.type, commandAddress);
+      await this.writeResetMessageIn(device, device.type, commandAddress);
       result.messageInReset = true;
     } catch (error) {
       result.error = `No se pudo resetear messageIn: ${error.message}`;
@@ -447,7 +523,7 @@ class ConnectionService {
     }
 
     try {
-      const outReset = await this.waitForMessageOutZero(client, responseAddress);
+      const outReset = await this.waitForMessageOutZero(device, responseAddress);
       result.messageOutReset = outReset.ok;
       result.lastMessageOut = outReset.lastValue;
     } catch (error) {
@@ -481,9 +557,8 @@ class ConnectionService {
     for (const device of devices) {
       try {
         if (!this.simulate) {
-          const client = await this.getClient(device);
           const commandAddress = this.resolveRegister(device, "messageIn");
-          await this.writeResetMessageIn(client, device.type, commandAddress);
+          await this.writeResetMessageIn(device, device.type, commandAddress);
         }
 
         result.reset += 1;
@@ -532,7 +607,6 @@ class ConnectionService {
       return { ack: "DONE", stateOk: true, raw: { simulated: true } };
     }
 
-    const client = await this.getClient(device);
     const commandAddress = this.resolveRegister(device, "messageIn", command.address);
     const responseAddress = this.resolveRegister(device, "messageOut", command.responseAddress);
 
@@ -545,21 +619,24 @@ class ConnectionService {
       responseAddress,
     });
 
-    if (String(device.type).toUpperCase() === "CARRO") {
-      const { high, low } = this.splitCarroCommandValue(command.value);
-      this.logger.info?.("[connection] carro split command", {
-        robotId,
-        high,
-        low,
-      });
-      await client.writeSingleRegister(commandAddress, high);
-      await client.writeSingleRegister(commandAddress + 1, low);
-    } else {
+    await this.runModbusOp(device, async (client) => {
+      if (String(device.type).toUpperCase() === "CARRO") {
+        const { high, low } = this.splitCarroCommandValue(command.value);
+        this.logger.info?.("[connection] carro split command", {
+          robotId,
+          high,
+          low,
+        });
+        await client.writeSingleRegister(commandAddress, high);
+        await client.writeSingleRegister(commandAddress + 1, low);
+        return;
+      }
+
       await client.writeSingleRegister(commandAddress, Number(command.value));
-    }
+    });
 
     const ackResult = await this.waitForExpectedResponse(
-      client,
+      device,
       responseAddress,
       command.expectedResponses || [100]
     );
@@ -579,7 +656,6 @@ class ConnectionService {
     let reset = null;
     if (stateOk) {
       reset = await this.resetStepRegisters({
-        client,
         device,
         commandAddress,
         responseAddress,
@@ -626,9 +702,8 @@ class ConnectionService {
       return new Array(length).fill(0);
     }
 
-    const client = await this.getClient(device);
     const address = this.resolveRegister(device, variable);
-    return client.readHoldingRegisters(address, length);
+    return this.runModbusOp(device, (client) => client.readHoldingRegisters(address, length));
   }
 
   async writeVariable({ robotId, type, variable, value }) {
@@ -641,9 +716,10 @@ class ConnectionService {
       return { ok: true, simulated: true };
     }
 
-    const client = await this.getClient(device);
     const address = this.resolveRegister(device, variable);
-    await client.writeSingleRegister(address, Number(value));
+    await this.runModbusOp(device, async (client) => {
+      await client.writeSingleRegister(address, Number(value));
+    });
     return { ok: true };
   }
 
@@ -687,37 +763,38 @@ class ConnectionService {
       };
     }
 
-    const client = await this.getClient(device);
     const messageInAddress = this.resolveRegister(device, "messageIn");
     const messageOutAddress = this.resolveRegister(device, "messageOut");
 
-    let messageIn1 = null;
-    let messageIn2 = null;
-    if (deviceType === "CARRO") {
-      const values = await client.readHoldingRegisters(messageInAddress, 2);
-      messageIn1 = values[0] ?? null;
-      messageIn2 = values[1] ?? null;
-    } else {
-      const values = await client.readHoldingRegisters(messageInAddress, 1);
-      messageIn1 = values[0] ?? null;
-    }
+    return this.runModbusOp(device, async (client) => {
+      let messageIn1 = null;
+      let messageIn2 = null;
+      if (deviceType === "CARRO") {
+        const values = await client.readHoldingRegisters(messageInAddress, 2);
+        messageIn1 = values[0] ?? null;
+        messageIn2 = values[1] ?? null;
+      } else {
+        const values = await client.readHoldingRegisters(messageInAddress, 1);
+        messageIn1 = values[0] ?? null;
+      }
 
-    const outValues = await client.readInputRegisters(messageOutAddress, 1);
-    const messageOut = outValues[0] ?? null;
+      const outValues = await client.readInputRegisters(messageOutAddress, 1);
+      const messageOut = outValues[0] ?? null;
 
-    return {
-      robotId: String(robotId),
-      type: deviceType,
-      registerMap,
-      values: {
-        messageIn1,
-        messageIn2,
-        messageOut,
-      },
-      decodedMessageOut: decodeResponse(messageOut),
-      lastResponse: device.lastResponse || null,
-      simulated: false,
-    };
+      return {
+        robotId: String(robotId),
+        type: deviceType,
+        registerMap,
+        values: {
+          messageIn1,
+          messageIn2,
+          messageOut,
+        },
+        decodedMessageOut: decodeResponse(messageOut),
+        lastResponse: device.lastResponse || null,
+        simulated: false,
+      };
+    });
   }
 }
 

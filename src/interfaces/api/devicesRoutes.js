@@ -75,7 +75,7 @@ function createDevicesRoutes(services) {
         protocol: normalizeDeviceProtocol(body.protocol),
         host: body.host,
         port: Number(body.port || 502),
-        unitId: Number(body.unitId || 1),
+        unitId: Number(body.unitId || 255),
         timeoutMs: Number(body.timeoutMs || 2000),
         registerMap: parseRegisterMap(body),
       });

@@ -8,7 +8,7 @@ function createServiceWithDevice({ type }) {
     type,
     host: "127.0.0.1",
     port: 502,
-    unitId: 1,
+    unitId: 255,
     registerMap: {
       messageIn: 0,
       messageOut: 0,
@@ -89,6 +89,8 @@ test("ConnectionService resetea messageIn1 y messageIn2 para CARRO", async () =>
   const writes = [];
   const readSequence = [100, 100, 0];
   const client = {
+    async ensureConnected() {},
+    markDisconnected() {},
     async writeSingleRegister(address, value) {
       writes.push({ address, value });
     },
@@ -122,6 +124,8 @@ test("ConnectionService espera OUT=100 antes de resetear en ELEVADOR", async () 
   const writes = [];
   const readSequence = [0, 100, 100, 0];
   const client = {
+    async ensureConnected() {},
+    markDisconnected() {},
     async writeSingleRegister(address, value) {
       writes.push({ address, value });
     },
@@ -155,7 +159,7 @@ test("ConnectionService aplica backoff y recrea cliente al quinto fallo", async 
     type: "CARRO",
     host: "127.0.0.1",
     port: 502,
-    unitId: 1,
+    unitId: 255,
     registerMap: {
       messageIn: 0,
       messageOut: 0,
