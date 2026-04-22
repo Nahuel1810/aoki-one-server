@@ -28,6 +28,26 @@ class ConnectionService {
       Number(process.env.CONNECTION_RETRY_BACKOFF_MAX_MS || 30000);
     this.clients = new Map();
     this.connectionRecovery = new Map();
+    /** Recreaciones de cliente seguidas sin éxito Modbus por dispositivo (robotId:type) */
+    this.modbusRecreateStreakByDevice = new Map();
+    const hardLimitEnv = process.env.MODBUS_HARD_RESET_AFTER_RECREATES_PER_DEVICE;
+    this.modbusHardResetAfterRecreates =
+      options.modbusHardResetAfterRecreates !== undefined && options.modbusHardResetAfterRecreates !== null
+        ? Number(options.modbusHardResetAfterRecreates)
+        : hardLimitEnv !== undefined && hardLimitEnv !== ""
+          ? Number(hardLimitEnv)
+          : 10;
+    const cooldownEnv = process.env.MODBUS_HARD_RESET_COOLDOWN_MS;
+    this.modbusHardResetCooldownMs =
+      options.modbusHardResetCooldownMs !== undefined && options.modbusHardResetCooldownMs !== null
+        ? Number(options.modbusHardResetCooldownMs)
+        : cooldownEnv !== undefined && cooldownEnv !== ""
+          ? Number(cooldownEnv)
+          : 1000;
+    this.modbusHardResetExitProcess =
+      options.modbusHardResetExitProcess === true ||
+      String(process.env.MODBUS_HARD_RESET_EXIT_PROCESS || "").toLowerCase() === "1" ||
+      String(process.env.MODBUS_HARD_RESET_EXIT_PROCESS || "").toLowerCase() === "true";
     this.monitorTimer = null;
   }
 
@@ -143,6 +163,46 @@ class ConnectionService {
     }
 
     this.clients.delete(key);
+  }
+
+  /**
+   * Equivale a lo que suele arreglar un reinicio del proceso respecto a Modbus:
+   * cierra y elimina todos los clientes TCP y limpia el estado de backoff del monitor.
+   * Opcionalmente termina el proceso (MODBUS_HARD_RESET_EXIT_PROCESS) para que PM2/systemd reinicien.
+   */
+  async hardResetModbusTransport(meta = {}) {
+    if (this.simulate) {
+      return;
+    }
+
+    const clientCount = this.clients.size;
+    this.logger.warn?.("[connection] hard reset transporte Modbus (simil reinicio de proceso)", {
+      ...meta,
+      clientCount,
+    });
+
+    for (const [, client] of this.clients) {
+      try {
+        await client.disconnect?.();
+      } catch (error) {
+        this.logger.warn?.("[connection] hard reset: fallo al desconectar cliente", {
+          message: error.message,
+        });
+      }
+    }
+
+    this.clients.clear();
+    this.connectionRecovery.clear();
+    this.modbusRecreateStreakByDevice.clear();
+
+    if (this.modbusHardResetCooldownMs > 0) {
+      await this.sleep(this.modbusHardResetCooldownMs);
+    }
+
+    if (this.modbusHardResetExitProcess) {
+      this.logger.error?.("[connection] MODBUS_HARD_RESET_EXIT_PROCESS: saliendo del proceso para reinicio externo");
+      process.exit(1);
+    }
   }
 
   startMonitoring() {
@@ -419,6 +479,7 @@ class ConnectionService {
           await client.ensureConnected();
           const result = await operation(client);
           this.clearRecoveryState(device.robotId, device.type);
+          this.modbusRecreateStreakByDevice.delete(this.deviceKey(device.robotId, device.type));
           return result;
         } catch (error) {
           if (!isConnectivityError(error)) {
@@ -446,6 +507,19 @@ class ConnectionService {
         robotId: device.robotId,
         type: device.type,
       });
+
+      const streakKey = this.deviceKey(device.robotId, device.type);
+      const streak = (this.modbusRecreateStreakByDevice.get(streakKey) || 0) + 1;
+      this.modbusRecreateStreakByDevice.set(streakKey, streak);
+
+      const hardLimit = this.modbusHardResetAfterRecreates;
+      if (hardLimit > 0 && streak >= hardLimit) {
+        await this.hardResetModbusTransport({
+          robotId: device.robotId,
+          type: device.type,
+          recreateStreak: streak,
+        });
+      }
     }
   }
 

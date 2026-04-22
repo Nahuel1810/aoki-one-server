@@ -197,3 +197,29 @@ test("ConnectionService aplica backoff y recrea cliente al quinto fallo", async 
   assert.equal(recreateCalls, 1);
   assert.equal(recovery.consecutiveFailures, 5);
 });
+
+test("hardResetModbusTransport desconecta todos los clientes y limpia maps", async () => {
+  const service = createServiceWithDevice({ type: "CARRO" });
+  service.modbusHardResetCooldownMs = 0;
+
+  let disconnects = 0;
+  service.clients.set("1:CARRO", {
+    async disconnect() {
+      disconnects += 1;
+    },
+  });
+  service.clients.set("1:ELEVADOR", {
+    async disconnect() {
+      disconnects += 1;
+    },
+  });
+  service.connectionRecovery.set("1:CARRO", { consecutiveFailures: 3, nextRetryAt: 1, lastError: "x" });
+  service.modbusRecreateStreakByDevice.set("1:CARRO", 5);
+
+  await service.hardResetModbusTransport({ reason: "test" });
+
+  assert.equal(disconnects, 2);
+  assert.equal(service.clients.size, 0);
+  assert.equal(service.connectionRecovery.size, 0);
+  assert.equal(service.modbusRecreateStreakByDevice.size, 0);
+});
