@@ -197,6 +197,56 @@
       .status-err { background: #fdeceb; color: var(--danger); }
       .status-muted { background: #eef2ee; color: #4f5d50; }
 
+      .slot-item .status-pill {
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+
+      .slot-item .status-pill.status-ok {
+        background: linear-gradient(135deg, #1b5e20, #2e7d32);
+        color: #fff;
+      }
+
+      .slot-item .status-pill.status-warn {
+        background: linear-gradient(135deg, #e65100, #f57c00);
+        color: #fff;
+      }
+
+      .slot-item .status-pill.status-err {
+        background: linear-gradient(135deg, #b71c1c, #d32f2f);
+        color: #fff;
+      }
+
+      .slot-item .status-pill.status-muted {
+        background: linear-gradient(135deg, #455a64, #607d8b);
+        color: #fff;
+      }
+
+      .slot-item.slot-item--interactive {
+        cursor: pointer;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+      }
+
+      .slot-item.slot-item--interactive:hover {
+        transform: translateY(-1px);
+      }
+
+      .slot-item.slot-item--occupied {
+        background: linear-gradient(160deg, #e3f7ec 0%, #c8edd8 45%, #b0e4c9 100%);
+        border-color: #2e7d32;
+        box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.22), 0 8px 22px rgba(27, 94, 32, 0.12);
+      }
+
+      .slot-item.slot-item--occupied:hover {
+        border-color: #1b5e20;
+        box-shadow: 0 0 0 2px rgba(27, 94, 32, 0.35), 0 10px 26px rgba(27, 94, 32, 0.16);
+      }
+
+      .slot-item.slot-item--interactive:focus-visible {
+        outline: 2px solid rgba(20, 111, 71, 0.55);
+        outline-offset: 2px;
+      }
+
       .controls-3 {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -285,6 +335,23 @@
         flex-wrap: wrap;
       }
 
+      .slot-item .slot-top {
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        gap: 10px;
+      }
+
+      .slot-item .slot-top strong {
+        width: 100%;
+        word-break: break-all;
+      }
+
+      .slot-item .slot-top .status-pill {
+        align-self: flex-start;
+      }
+
       .order-item.active {
         border-color: #3aa56f;
         box-shadow: 0 0 0 2px rgba(58, 165, 111, 0.15);
@@ -331,6 +398,9 @@
         display: grid;
         grid-template-columns: 1fr;
         gap: 12px;
+        border-left: 1px solid var(--border);
+        padding-left: 16px;
+        margin-left: 0;
       }
 
       .slot-item {
@@ -338,6 +408,7 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
+        cursor: default;
       }
 
       .slot-item strong {
@@ -368,6 +439,11 @@
 
         .slot-right-grid {
           grid-template-columns: repeat(3, minmax(0, 1fr));
+          border-left: none;
+          padding-left: 0;
+          border-top: 1px solid var(--border);
+          padding-top: 16px;
+          margin-top: 4px;
         }
       }
 
@@ -401,9 +477,6 @@
         <div class="orders-layout">
           <article class="card">
              <div id="slotsBoard" class="slot-main-grid"></div>
-                <div class="card-footer">
-              <button id="refreshOrdersBtn" class="ghost" type="button">Actualizar pedidos y slots</button>
-            </div>
           </article>
 
           <article class="stack">
@@ -537,11 +610,50 @@
         return "status-ok";
       }
 
-      function slotStatusClass(status) {
-        if (status === "OCCUPIED") return "status-ok";
-        if (status === "BLOCKED") return "status-err";
-        if (status === "PICK_IN_PROGRESS" || status === "PUT_IN_PROGRESS" || status === "RESERVED") return "status-warn";
+      function normalizeSlotStatus(status) {
+        if (status === undefined || status === null || status === "") return null;
+        const u = String(status).trim().toUpperCase();
+        const map = {
+          FREE: "LIBRE",
+          AVAILABLE: "LIBRE",
+          EMPTY: "LIBRE",
+          LIBRE: "LIBRE",
+          OCCUPIED: "OCUPADO",
+          OCUPADO: "OCUPADO",
+          RESERVED: "RESERVADO",
+          RESERVADO: "RESERVADO",
+          PICK_IN_PROGRESS: "BUSCANDO",
+          BUSCANDO: "BUSCANDO",
+          PUT_IN_PROGRESS: "DEVOLVIENDO",
+          DEVOLVIENDO: "DEVOLVIENDO",
+          BLOCKED: "ERROR",
+          ERROR: "ERROR",
+        };
+        return map[u] || (["LIBRE", "OCUPADO", "RESERVADO", "BUSCANDO", "DEVOLVIENDO", "ERROR"].includes(u) ? u : u);
+      }
+
+      function slotStatusClass(statusRaw) {
+        const status = normalizeSlotStatus(statusRaw);
+        if (!status) return "status-muted";
+        if (status === "OCUPADO") return "status-ok";
+        if (status === "ERROR") return "status-err";
+        if (status === "BUSCANDO" || status === "DEVOLVIENDO" || status === "RESERVADO") return "status-warn";
+        if (status === "LIBRE") return "status-muted";
         return "status-muted";
+      }
+
+      function slotStatusLabel(statusRaw) {
+        const status = normalizeSlotStatus(statusRaw);
+        if (!status) return "Sin datos";
+        const labels = {
+          LIBRE: "Libre",
+          OCUPADO: "Ocupado",
+          RESERVADO: "Reservado",
+          BUSCANDO: "Buscando cajón",
+          DEVOLVIENDO: "Devolviendo",
+          ERROR: "Error / bloqueado",
+        };
+        return labels[status] || status;
       }
 
       function orderStatusClass(status) {
@@ -549,6 +661,17 @@
         if (status === "IN_PROGRESS") return "status-warn";
         if (status === "DONE") return "status-ok";
         return "status-muted";
+      }
+
+      function orderStatusLabel(status) {
+        const labels = {
+          PENDING: "Pendiente",
+          IN_PROGRESS: "En curso",
+          ERROR: "Error",
+          DONE: "Hecho",
+          CANCELED: "Cancelado",
+        };
+        return labels[status] || status;
       }
 
       function asSafe(text) {
@@ -648,7 +771,7 @@
         const connectedRobots = appState.robots.filter((robot) => Array.isArray(robot.devices) && robot.devices.some((d) => d.status === "CONNECTED"));
         const inProgress = appState.orders.filter((order) => order.status === "IN_PROGRESS");
         const pending = appState.orders.filter((order) => order.status === "PENDING");
-        const occupiedSlots = appState.slots.filter((slot) => slot.status === "OCCUPIED");
+        const occupiedSlots = appState.slots.filter((slot) => normalizeSlotStatus(slot.status) === "OCUPADO");
       }
 
       function renderRobots() {
@@ -724,7 +847,7 @@
               <article class="order-item ${isActive ? "active" : ""}">
                 <div class="order-top">
                   <strong>${asSafe(order.type)} | ${asSafe(order.locationCode)}</strong>
-                  <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(order.status)}</span>
+                  <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(orderStatusLabel(order.status))}</span>
                 </div>
                 <div class="order-meta">
                   <div>Robot: ${asSafe(order.robotId || "sin asignar")}</div>
@@ -751,26 +874,27 @@
       }
 
       function slotMarkup(slotCode, slot) {
-        const status = slot ? slot.status : "UNKNOWN";
-        const boxId = slot && slot.currentBox ? slot.currentBox.id : "sin cajón";
+        const statusRaw = slot ? slot.status : null;
+        const canon = normalizeSlotStatus(statusRaw);
+        const pillClass = !slot ? "status-muted" : slotStatusClass(statusRaw);
         const source = slot && slot.currentBox && slot.currentBox.sourceLocationCode
           ? slot.currentBox.sourceLocationCode
-          : "-";
+          : "—";
+        const occupied = canon === "OCUPADO";
+        const occupiedClass = occupied ? "slot-item--occupied" : "";
 
         return `
-          <article class="slot-item">
+          <article class="slot-item slot-item--interactive ${occupiedClass}" data-slot-code="${asSafe(slotCode)}" role="button" tabindex="0" title="Clic en la tarjeta para usar este slot como origen del PUT (devolución).">
             <div>
               <div class="slot-top">
-                <strong>${asSafe(slotCode)}</strong>
-                <span class="status-pill ${slotStatusClass(status)}">${asSafe(status)}</span>
+                <strong>${asSafe(source) || 'LIBRE'}</strong>
+                <span class="status-pill ${pillClass}">${asSafe(slotStatusLabel(statusRaw))}</span>
               </div>
               <div class="slot-meta">
-                <div>Cajón actual: ${asSafe(boxId)}</div>
-                <div>Origen del cajón: ${asSafe(source)}</div>
+                <div>${asSafe(slotCode)}</div>
               </div>
             </div>
             <div class="actions">
-              <button type="button" class="ghost" data-action="prefill-put" data-slot="${asSafe(slotCode)}">Devolver</button>
               <button type="button" class="ghost" data-action="release-slot" data-slot="${asSafe(slotCode)}">Liberar slot</button>
             </div>
           </article>
@@ -796,7 +920,7 @@
 
         const occupied = VALID_PICK_SLOTS.filter((code) => {
           const slot = map.get(code);
-          return slot && slot.status === "OCCUPIED";
+          return slot && normalizeSlotStatus(slot.status) === "OCUPADO";
         });
 
         const available = VALID_PICK_SLOTS.filter((code) => !occupied.includes(code));
@@ -917,6 +1041,19 @@
         document.getElementById("refreshDevicesBtn").addEventListener("click", refreshDevicesData);
 
         document.addEventListener("click", async (event) => {
+          const releaseBtn = event.target.closest('button[data-action="release-slot"]');
+          if (releaseBtn) {
+            await handleSlotRelease(releaseBtn.dataset.slot);
+            return;
+          }
+
+          const slotCard = event.target.closest(".slot-item[data-slot-code]");
+          if (slotCard && !event.target.closest("button")) {
+            document.getElementById("putSourceSlot").value = slotCard.dataset.slotCode;
+            document.getElementById("putTargetLocation").focus();
+            return;
+          }
+
           const button = event.target.closest("button[data-action]");
           if (!button) return;
 
@@ -925,15 +1062,15 @@
           if (action === "retry" || action === "cancel") {
             await handleOrderAction(action, button.dataset.id);
           }
+        });
 
-          if (action === "release-slot") {
-            await handleSlotRelease(button.dataset.slot);
-          }
-
-          if (action === "prefill-put") {
-            document.getElementById("putSourceSlot").value = button.dataset.slot;
-            document.getElementById("putTargetLocation").focus();
-          }
+        document.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          const card = event.target.closest(".slot-item[data-slot-code]");
+          if (!card || event.target.closest("button")) return;
+          event.preventDefault();
+          document.getElementById("putSourceSlot").value = card.dataset.slotCode;
+          document.getElementById("putTargetLocation").focus();
         });
       }
 
