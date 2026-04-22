@@ -1,8 +1,8 @@
 const { parseLocationCode } = require("./locationTranslator");
 
 function isSlotAvailable(slot) {
-  const status = String(slot?.status || "FREE").toUpperCase();
-  return status === "FREE" || status === "AVAILABLE";
+  const status = String(slot?.status || "LIBRE").toUpperCase();
+  return status === "LIBRE" || status === "AVAILABLE";
 }
 
 function toParsedSlot(slot) {

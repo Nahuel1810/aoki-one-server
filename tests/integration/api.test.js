@@ -162,7 +162,7 @@ test("API expone estado de slots de pickeo", async () => {
     assert.equal(listData.ok, true);
     assert.equal(Array.isArray(listData.data), true);
     assert.equal(listData.data.length, 2);
-    assert.equal(listData.data[0].status, "FREE");
+    assert.equal(listData.data[0].status, "LIBRE");
 
     const releaseRes = await fetch(toUrl(server, "/api/slots/3X02AE1/release"), {
       method: "POST",

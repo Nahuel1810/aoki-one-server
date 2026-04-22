@@ -2,12 +2,12 @@ const { randomUUID } = require("node:crypto");
 const { parseLocationCode } = require("../orchestrator/locationTranslator");
 
 const SLOT_STATUS = {
-  FREE: "FREE",
-  RESERVED: "RESERVED",
-  PICK_IN_PROGRESS: "PICK_IN_PROGRESS",
-  OCCUPIED: "OCCUPIED",
-  PUT_IN_PROGRESS: "PUT_IN_PROGRESS",
-  BLOCKED: "BLOCKED",
+  FREE: "LIBRE",
+  RESERVED: "RESERVADO",
+  PICK_IN_PROGRESS: "BUSCANDO",
+  OCCUPIED: "OCUPADO",
+  PUT_IN_PROGRESS: "DEVOLVIENDO",
+  BLOCKED: "ERROR",
 };
 
 function normalizeLocationCode(value) {
