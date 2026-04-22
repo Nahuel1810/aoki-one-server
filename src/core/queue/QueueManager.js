@@ -9,7 +9,7 @@ class QueueManager {
 
   ensureRobot(robotId) {
     if (!this.byRobot.has(robotId)) {
-      this.byRobot.set(robotId, { activeOrderId: null, items: [] });
+      this.byRobot.set(robotId, { activeOrderId: null, items: [], paused: false });
     }
 
     return this.byRobot.get(robotId);
@@ -20,10 +20,11 @@ class QueueManager {
     state.items.push(order.id);
   }
 
-  restoreRobotQueue(robotId, queuedOrderIds = [], activeOrderId = null) {
+  restoreRobotQueue(robotId, queuedOrderIds = [], activeOrderId = null, paused = false) {
     this.byRobot.set(robotId, {
       activeOrderId,
       items: [...queuedOrderIds],
+      paused,
     });
   }
 
@@ -39,7 +40,27 @@ class QueueManager {
 
   dequeueNext(robotId) {
     const state = this.ensureRobot(robotId);
+    if (state.paused) {
+      return null;
+    }
     return state.items.shift() || null;
+  }
+
+  pauseQueue(robotId) {
+    const state = this.ensureRobot(robotId);
+    state.paused = true;
+    return state;
+  }
+
+  resumeQueue(robotId) {
+    const state = this.ensureRobot(robotId);
+    state.paused = false;
+    return state;
+  }
+
+  isQueuePaused(robotId) {
+    const state = this.ensureRobot(robotId);
+    return state.paused;
   }
 
   removeOrder(robotId, orderId) {
@@ -62,6 +83,7 @@ class QueueManager {
         robotId,
         activeOrderId: state.activeOrderId,
         queueLength: state.items.length,
+        paused: state.paused,
         queuedOrderIds: [...state.items],
       });
     }

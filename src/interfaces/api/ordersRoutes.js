@@ -123,6 +123,41 @@ function createOrdersRoutes(services) {
     res.status(202).json({ ok: true, data: order });
   });
 
+  router.post("/queue/:robotId/pause", (req, res) => {
+    try {
+      const robotId = String(req.params.robotId || "").trim();
+      if (!robotId) {
+        res.status(400).json({ ok: false, error: "robotId es requerido" });
+        return;
+      }
+
+      services.queueManager.pauseQueue(robotId);
+      res.json({ ok: true, data: { robotId, paused: true } });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.post("/queue/:robotId/resume", (req, res) => {
+    try {
+      const robotId = String(req.params.robotId || "").trim();
+      if (!robotId) {
+        res.status(400).json({ ok: false, error: "robotId es requerido" });
+        return;
+      }
+
+      services.queueManager.resumeQueue(robotId);
+      res.json({ ok: true, data: { robotId, paused: false } });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.get("/queue/status", (req, res) => {
+    const snapshot = services.queueManager.getSnapshot();
+    res.json({ ok: true, data: snapshot });
+  });
+
   return router;
 }
 
