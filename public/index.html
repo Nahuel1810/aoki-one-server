@@ -36,8 +36,8 @@
       }
 
       .shell {
-        width: min(1380px, 96vw);
-        margin: 18px auto 32px;
+        width: min(1600px, calc(100vw - 16px));
+        margin: 12px auto 24px;
       }
 
       .hero {
@@ -146,8 +146,8 @@
 
       .orders-layout {
         display: grid;
-        grid-template-columns: 1.55fr 1fr;
-        gap: 14px;
+        grid-template-columns: 1.35fr 1fr;
+        gap: 12px;
       }
 
       .stack {
@@ -240,6 +240,129 @@
       .slot-item.slot-item--occupied:hover {
         border-color: #1b5e20;
         box-shadow: 0 0 0 2px rgba(27, 94, 32, 0.35), 0 10px 26px rgba(27, 94, 32, 0.16);
+      }
+
+      .slot-item.slot-item--intermediate {
+        background: linear-gradient(165deg, #fff9e0 0%, #ffecb3 45%, #ffe082 100%);
+        border-color: #f9a825;
+        box-shadow: 0 0 0 2px rgba(249, 168, 37, 0.28), 0 6px 16px rgba(183, 122, 31, 0.12);
+      }
+
+      .slot-item.slot-item--intermediate:hover {
+        border-color: #f57f17;
+        box-shadow: 0 0 0 2px rgba(245, 127, 23, 0.35), 0 8px 18px rgba(183, 122, 31, 0.14);
+      }
+
+      .slot-item.slot-item--blank {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border-color: var(--border);
+        box-shadow: none;
+        padding: 8px 6px;
+      }
+
+      .slot-item.slot-item--blank .slot-blank-fill {
+        flex: 1 0 auto;
+        min-height: calc(2 * 1.2em + 28px);
+      }
+
+      .slot-motion {
+        margin-top: 4px;
+        display: grid;
+        gap: 2px;
+        line-height: 1.2;
+      }
+
+      .slot-motion-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: #6d4c41;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .slot-motion-code {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: clamp(14px, 2.35vw, 22px);
+        font-weight: 800;
+        color: #4e342e;
+        word-break: break-all;
+        line-height: 1.15;
+      }
+
+      .slot-motion-code--alone {
+        font-size: clamp(12px, 1.8vw, 16px);
+      }
+
+      .slot-board-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* 3 filas: izquierda 3×3 + columna derecha (3 slots módulo 02) */
+      .slot-board-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1fr);
+        grid-template-rows: repeat(3, auto);
+        align-items: stretch;
+        gap: 5px;
+        width: 100%;
+        padding-bottom: 2px;
+      }
+
+      .slot-board-grid .slot-item {
+        min-width: 0;
+        border-radius: 10px;
+      }
+
+      .orders-view-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .orders-release-footer h2 {
+        margin: 0 0 10px;
+        font-size: 16px;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .slot-release-panel {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px dashed var(--border);
+        background: #fafbf9;
+      }
+
+      .slot-release-panel .field {
+        flex: 1 1 200px;
+        margin: 0;
+      }
+
+      .slot-release-panel .field label {
+        font-size: 12px;
+      }
+
+      .slot-release-panel button.danger {
+        flex: 0 0 auto;
+        width: auto;
+        min-width: 130px;
+        padding: 10px 16px;
+      }
+
+      .slot-release-hint {
+        flex: 1 1 100%;
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.35;
       }
 
       .slot-item.slot-item--interactive:focus-visible {
@@ -392,9 +515,8 @@
         gap: 10px;
       }
 
-      .slot-item .slot-top strong {
+      .slot-item .slot-top .slot-headline {
         width: 100%;
-        word-break: break-all;
       }
 
       .slot-item .slot-top .status-pill {
@@ -431,38 +553,44 @@
         font-size: 13px;
       }
 
-      .slot-main-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
-        gap: 12px;
-      }
-
-      .slot-left-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-      }
-
-      .slot-right-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 12px;
-        border-left: 1px solid var(--border);
-        padding-left: 16px;
-        margin-left: 0;
-      }
-
       .slot-item {
-        min-height: 168px;
+        min-height: 0;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        justify-content: flex-start;
         cursor: default;
+        padding: 7px 6px;
       }
 
-      .slot-item strong {
+      /* Misma tipografía para “—” y para código de ubicación (alineación del grid). */
+      .slot-item .slot-headline {
         font-family: "Space Grotesk", sans-serif;
-        font-size: clamp(17px, 1.6vw, 25px);
+        font-size: clamp(15px, 2.35vw, 22px);
+        font-weight: 800;
+        line-height: 1.2;
+        word-break: break-all;
+        display: block;
+        min-height: calc(2 * 1.2em);
+        color: inherit;
+      }
+
+      .slot-item .status-pill {
+        font-size: 9px;
+        padding: 2px 6px;
+        letter-spacing: 0.01em;
+      }
+
+      .slot-item .slot-meta {
+        font-size: 10px;
+        margin-top: 4px;
+      }
+
+      .slot-item .slot-top {
+        gap: 5px;
+      }
+
+      .slot-item .slot-top--state-only {
+        gap: 4px;
       }
 
       .fade-in {
@@ -481,18 +609,8 @@
         }
 
         .grid-devices,
-        .orders-layout,
-        .slot-main-grid {
+        .orders-layout {
           grid-template-columns: 1fr;
-        }
-
-        .slot-right-grid {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          border-left: none;
-          padding-left: 0;
-          border-top: 1px solid var(--border);
-          padding-top: 16px;
-          margin-top: 4px;
         }
       }
 
@@ -503,9 +621,7 @@
 
         .kpi-row,
         .controls-2,
-        .controls-3,
-        .slot-left-grid,
-        .slot-right-grid {
+        .controls-3 {
           grid-template-columns: 1fr;
         }
       }
@@ -523,10 +639,12 @@
       </section>
 
       <section class="view" id="ordersView">
+        <div class="orders-view-stack">
         <div class="orders-layout">
           <article class="card">
-             <div id="slotsBoard" class="slot-main-grid"></div>
-              <div class="card-footer">
+            <h2 style="margin: 0 0 10px; font-size: 17px;">Slots de pickeo</h2>
+            <div class="slot-board-wrap">
+              <div id="slotsBoard" class="slot-board-grid" aria-label="Slots de pickeo, 3 filas"></div>
             </div>
           </article>
 
@@ -570,6 +688,21 @@
                 </div>
               </form>
             </div>
+        </div>
+
+        <article class="card orders-release-footer">
+          <h2>Liberar slot (manual)</h2>
+          <div class="slot-release-panel" id="slotReleasePanel">
+            <p class="slot-release-hint">
+              Última opción: liberación manual. Elige un slot ocupado y confirma. No está en cada tarjeta para evitar toques accidentales.
+            </p>
+            <div class="field">
+              <label for="releaseSlotSelect">Slot ocupado</label>
+              <select id="releaseSlotSelect"></select>
+            </div>
+            <button type="button" class="danger" id="releaseSlotConfirmBtn">Liberar slot</button>
+          </div>
+        </article>
         </div>
       </section>
 
@@ -645,6 +778,17 @@
 
       const VALID_PICK_SLOTS = [...RIGHT_PICK_SLOTS, ...LEFT_PICK_SLOTS];
 
+      /** Orden en tablero: 3 filas (izq. 3×3 + derecha alineada por fila). */
+      function pickSlotsBoardOrder() {
+        const L = LEFT_PICK_SLOTS;
+        const R = RIGHT_PICK_SLOTS;
+        return [
+          L[0], L[1], L[2], R[0],
+          L[3], L[4], L[5], R[1],
+          L[6], L[7], L[8], R[2],
+        ];
+      }
+
       /** Intervalo de actualización automática pedidos + slots + robots (solo HTTP a este servidor; no toca Modbus desde el navegador). */
       const ORDERS_SLOTS_POLL_MS = 5000;
 
@@ -710,6 +854,34 @@
           ERROR: "Error / bloqueado",
         };
         return labels[status] || status;
+      }
+
+      function isSlotIntermediateStatus(canon) {
+        return canon === "BUSCANDO" || canon === "DEVOLVIENDO" || canon === "RESERVADO";
+      }
+
+      function findOrderById(orderId) {
+        if (!orderId) return null;
+        const id = String(orderId);
+        return (appState.orders || []).find((o) => String(o.id) === id) || null;
+      }
+
+      /** HTML interno (ya escapado) para trayendo / devolviendo. */
+      function getSlotMotionInnerHtml(slot, canon) {
+        if (!slot || !isSlotIntermediateStatus(canon)) return "";
+        const order = findOrderById(slot.reservedByOrderId);
+        if (!order) {
+          return `<div class="slot-motion-code slot-motion-code--alone">${asSafe("Pedido en curso (sin detalle)")}</div>`;
+        }
+        if (order.type === "PICK") {
+          const loc = String(order.locationCode || "").trim() || "—";
+          return `<div class="slot-motion-label">Trayendo desde</div><div class="slot-motion-code">${asSafe(loc)}</div>`;
+        }
+        if (order.type === "PUT") {
+          const loc = String(order.targetLocation || "").trim() || "—";
+          return `<div class="slot-motion-label">Devolviendo a</div><div class="slot-motion-code">${asSafe(loc)}</div>`;
+        }
+        return "";
       }
 
       function orderStatusClass(status) {
@@ -801,6 +973,7 @@
           renderOrders();
           renderSlots();
           renderPutSlotOptions();
+          renderReleaseSlotBar();
           renderRobots();
         } catch (error) {
           setSyncError(error);
@@ -1048,26 +1221,47 @@
       function slotMarkup(slotCode, slot) {
         const statusRaw = slot ? slot.status : null;
         const canon = normalizeSlotStatus(statusRaw);
+        const isBlankFree = canon === "LIBRE" || !slot;
         const pillClass = !slot ? "status-muted" : slotStatusClass(statusRaw);
         const source = slot && slot.currentBox && slot.currentBox.sourceLocationCode
           ? slot.currentBox.sourceLocationCode
           : "—";
         const occupied = canon === "OCUPADO";
+        const intermediate = isSlotIntermediateStatus(canon);
         const occupiedClass = occupied ? "slot-item--occupied" : "";
+        const intermediateClass = intermediate ? "slot-item--intermediate" : "";
+        const blankClass = isBlankFree && !intermediate ? "slot-item--blank" : "";
+        const motionInner = intermediate ? getSlotMotionInnerHtml(slot, canon) : "";
+        const motionHtml = motionInner ? `<div class="slot-motion">${motionInner}</div>` : "";
+        const interactive = occupied;
+        const interactiveClass = interactive ? "slot-item--interactive" : "";
+        const a11y = interactive
+          ? `role="button" tabindex="0" title="Clic: encolar PUT devolviendo el cajón al origen registrado."`
+          : isBlankFree && !intermediate
+            ? `aria-label="Slot libre"`
+            : `role="group" title="${asSafe(slotStatusLabel(statusRaw))}"`;
+
+        if (isBlankFree && !intermediate) {
+          return `
+          <article class="slot-item ${blankClass}" data-slot-code="${asSafe(slotCode)}" ${a11y}>
+            <div class="slot-blank-fill" aria-hidden="true"></div>
+          </article>
+        `;
+        }
+
+        const topExtraClass = intermediate ? " slot-top--state-only" : "";
+        const strongHtml = intermediate
+          ? ""
+          : `<strong class="slot-headline">${asSafe(source || "—")}</strong>`;
 
         return `
-          <article class="slot-item slot-item--interactive ${occupiedClass}" data-slot-code="${asSafe(slotCode)}" role="button" tabindex="0" title="Clic: encolar PUT devolviendo el cajón al origen registrado (si el slot está ocupado y hay origen).">
+          <article class="slot-item ${interactiveClass} ${occupiedClass} ${intermediateClass}" data-slot-code="${asSafe(slotCode)}" ${a11y}>
             <div>
-              <div class="slot-top">
-                <strong>${asSafe(source) || 'LIBRE'}</strong>
+              <div class="slot-top${topExtraClass}">
+                ${strongHtml}
                 <span class="status-pill ${pillClass}">${asSafe(slotStatusLabel(statusRaw))}</span>
               </div>
-              <div class="slot-meta">
-                <div>${asSafe(slotCode)}</div>
-              </div>
-            </div>
-            <div class="actions">
-              <button type="button" class="ghost" data-action="release-slot" data-slot="${asSafe(slotCode)}">Liberar slot</button>
+              ${motionHtml}
             </div>
           </article>
         `;
@@ -1076,14 +1270,45 @@
       function renderSlots() {
         const root = document.getElementById("slotsBoard");
         const map = slotMapByLocation();
+        const ordered = pickSlotsBoardOrder();
+        root.innerHTML = ordered.map((code) => slotMarkup(code, map.get(code))).join("");
+      }
 
-        const leftGrid = LEFT_PICK_SLOTS.map((code) => slotMarkup(code, map.get(code))).join("");
-        const rightGrid = RIGHT_PICK_SLOTS.map((code) => slotMarkup(code, map.get(code))).join("");
+      function renderReleaseSlotBar() {
+        const select = document.getElementById("releaseSlotSelect");
+        if (!select) return;
+        const prev = select.value;
+        const map = slotMapByLocation();
+        const occupied = VALID_PICK_SLOTS.filter((code) => {
+          const slot = map.get(code);
+          return slot && normalizeSlotStatus(slot.status) === "OCUPADO";
+        });
 
-        root.innerHTML = `
-          <div class="slot-left-grid">${leftGrid}</div>
-          <div class="slot-right-grid">${rightGrid}</div>
-        `;
+        const btn = document.getElementById("releaseSlotConfirmBtn");
+        if (occupied.length === 0) {
+          select.innerHTML = '<option value="">No hay slots ocupados</option>';
+          select.disabled = true;
+          if (btn) btn.disabled = true;
+          return;
+        }
+
+        select.disabled = false;
+        if (btn) btn.disabled = false;
+        const options = [
+          '<option value="">Elegir slot…</option>',
+          ...occupied.map((code) => {
+            const slot = map.get(code);
+            const src = slot && slot.currentBox && slot.currentBox.sourceLocationCode
+              ? String(slot.currentBox.sourceLocationCode).trim()
+              : "";
+            const label = src ? `${code} · cajón ${src}` : code;
+            return `<option value="${asSafe(code)}">${asSafe(label)}</option>`;
+          }),
+        ];
+        select.innerHTML = options.join("");
+        if (prev && occupied.includes(prev)) {
+          select.value = prev;
+        }
       }
 
       function renderPutSlotOptions() {
@@ -1249,13 +1474,17 @@
 
         document.getElementById("refreshDevicesBtn").addEventListener("click", refreshDevicesData);
 
-        document.addEventListener("click", async (event) => {
-          const releaseBtn = event.target.closest('button[data-action="release-slot"]');
-          if (releaseBtn) {
-            await handleSlotRelease(releaseBtn.dataset.slot);
+        document.getElementById("releaseSlotConfirmBtn").addEventListener("click", async () => {
+          const select = document.getElementById("releaseSlotSelect");
+          const code = select && select.value ? String(select.value).trim().toUpperCase() : "";
+          if (!code) {
+            showStatus(orderStatus, false, "Elija un slot ocupado para liberar.");
             return;
           }
+          await handleSlotRelease(code);
+        });
 
+        document.addEventListener("click", async (event) => {
           const toggleQueueBtn = event.target.closest('button[data-action="toggle-queue-pause"]');
           if (toggleQueueBtn && !toggleQueueBtn.disabled) {
             await toggleQueuePause();
