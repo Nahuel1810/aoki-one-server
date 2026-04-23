@@ -336,7 +336,25 @@
 
       .queue-control-bar .queue-actions button.ghost {
         width: auto;
-        min-width: 120px;
+        min-width: 140px;
+      }
+
+      .queue-control-bar.queue-control-bar--paused {
+        border-color: rgba(183, 55, 46, 0.35);
+        background: linear-gradient(160deg, #fff5f5 0%, #fdeceb 100%);
+      }
+
+      .queue-control-bar.queue-control-bar--running {
+        border-color: rgba(58, 165, 111, 0.35);
+        background: linear-gradient(160deg, #f4fbf7 0%, #e6f7ee 100%);
+      }
+
+      .queue-system-state {
+        display: block;
+        font-size: 15px;
+        font-weight: 800;
+        color: var(--ink);
+        margin-bottom: 4px;
       }
 
       .list {
@@ -856,11 +874,14 @@
 
         const rows = getQueueRowsForUi();
         if (rows.length === 0) {
+          bar.className = "queue-control-bar";
           bar.innerHTML = `
-            <span class="queue-status-text">Sin robots en contexto. Registre dispositivos.</span>
+            <span class="queue-status-text">
+              <span class="queue-system-state">Sin robots</span>
+              Registre dispositivos para controlar la cola.
+            </span>
             <div class="queue-actions">
-              <button type="button" class="ghost" data-action="pause-queues" disabled>Pausar</button>
-              <button type="button" class="ghost" data-action="resume-queues" disabled>Reanudar</button>
+              <button type="button" class="ghost" data-action="toggle-queue-pause" disabled>Pausar / reanudar</button>
             </div>
           `;
           return;
@@ -868,18 +889,35 @@
 
         const parts = rows.map(
           (r) =>
-            `Robot ${asSafe(r.robotId)}: ${r.paused ? "pausada" : "activa"} · ${Number(r.queueLength)} en cola`
+              `Robot ${asSafe(r.robotId)}: ${r.paused ? "pedidos pausados" : "pedidos en curso"} · ${Number(r.queueLength)} pendientes`
         );
         const allPaused = rows.every((r) => r.paused);
         const anyPaused = rows.some((r) => r.paused);
+        const mixed = anyPaused && !allPaused;
 
+        const stateTitle = allPaused ? "Sistema en pausa" : "Sistema en ejecución";
+      
+        bar.className = `queue-control-bar ${allPaused ? "queue-control-bar--paused" : "queue-control-bar--running"}`;
         bar.innerHTML = `
-          <span class="queue-status-text">${asSafe(parts.join(" · "))}</span>
+          <span class="queue-status-text">
+            <span class="queue-system-state">${asSafe(stateTitle)}</span>
+            <span style="display:block;margin-top:8px;font-size:12px;">${asSafe(parts.join(" · "))}</span>
+          </span>
           <div class="queue-actions">
-            <button type="button" class="ghost" data-action="pause-queues" ${allPaused ? "disabled" : ""}>Pausar</button>
-            <button type="button" class="ghost" data-action="resume-queues" ${!anyPaused ? "disabled" : ""}>Reanudar</button>
+            <button type="button" class="ghost" data-action="toggle-queue-pause" aria-pressed="${allPaused}">${allPaused ? "Reanudar" : "Pausar"}</button>
           </div>
         `;
+      }
+
+      async function toggleQueuePause() {
+        const rows = getQueueRowsForUi();
+        if (rows.length === 0) return;
+        const allPaused = rows.every((r) => r.paused);
+        if (allPaused) {
+          await resumeAllQueues();
+        } else {
+          await pauseAllQueues();
+        }
       }
 
       async function pauseAllQueues() {
@@ -1218,15 +1256,9 @@
             return;
           }
 
-          const pauseQueuesBtn = event.target.closest('button[data-action="pause-queues"]');
-          if (pauseQueuesBtn && !pauseQueuesBtn.disabled) {
-            await pauseAllQueues();
-            return;
-          }
-
-          const resumeQueuesBtn = event.target.closest('button[data-action="resume-queues"]');
-          if (resumeQueuesBtn && !resumeQueuesBtn.disabled) {
-            await resumeAllQueues();
+          const toggleQueueBtn = event.target.closest('button[data-action="toggle-queue-pause"]');
+          if (toggleQueueBtn && !toggleQueueBtn.disabled) {
+            await toggleQueuePause();
             return;
           }
 
