@@ -49,6 +49,16 @@ test("StateManager administra slots y los persiste en snapshot", () => {
 
   assert.equal(occupied.status, SLOT_STATUS.OCCUPIED);
   assert.equal(occupied.currentBox.pickOrderId, "order-1");
+  assert.equal(occupied.logicalPickStackDepth, 1);
+
+  const found = state.findOccupiedPickSlotBySource("3X04AE3");
+  assert.ok(found);
+  assert.equal(found.locationCode, "3X02AE1");
+
+  state.incrementLogicalPickStack("3X02AE1");
+  assert.equal(state.getLogicalPickStackDepth("3X02AE1"), 2);
+  state.decrementLogicalPickStack("3X02AE1");
+  assert.equal(state.getLogicalPickStackDepth("3X02AE1"), 1);
 
   const reservedForPut = state.reserveOccupiedSlotForPut("3X02AE1", "order-put");
   assert.ok(reservedForPut);

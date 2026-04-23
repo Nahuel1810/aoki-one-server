@@ -149,6 +149,8 @@ class StateManager {
       waitingForSlot: Boolean(input.waitingForSlot),
       errorReason: null,
       steps: input.steps,
+      logicalPickOnly: Boolean(input.logicalPickOnly),
+      logicalReturnOnly: Boolean(input.logicalReturnOnly),
       history: [{ ts: now, event: "ORDER_CREATED" }],
       createdAt: now,
       updatedAt: now,
@@ -309,10 +311,72 @@ class StateManager {
         pickOrderId: boxData.pickOrderId || orderId,
         updatedAt: Date.now(),
       },
+      /** Pedidos PICK superpuestos sobre el mismo cajón en slot: 1 = solo físico; >1 requiere devoluciones lógicas antes de la física. */
+      logicalPickStackDepth: 1,
       updatedAt: Date.now(),
       lastError: null,
     };
 
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  findOccupiedPickSlotBySource(sourceLocationCode) {
+    const target = normalizeLocationCode(sourceLocationCode);
+    for (const slot of this.listSlots()) {
+      if (slot.status !== SLOT_STATUS.OCCUPIED || !slot.currentBox?.sourceLocationCode) {
+        continue;
+      }
+      const src = normalizeLocationCode(slot.currentBox.sourceLocationCode);
+      if (src === target) {
+        return slot;
+      }
+    }
+    return null;
+  }
+
+  getLogicalPickStackDepth(locationCode) {
+    const slot = this.getSlot(locationCode);
+    if (!slot) {
+      return 0;
+    }
+    const base = Number(slot.logicalPickStackDepth);
+    return Number.isFinite(base) && base > 0 ? base : 1;
+  }
+
+  incrementLogicalPickStack(locationCode) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      throw new Error("Slot no encontrado");
+    }
+    const base = Number(slot.logicalPickStackDepth);
+    const depth = Number.isFinite(base) && base > 0 ? base : 1;
+    const updated = {
+      ...slot,
+      logicalPickStackDepth: depth + 1,
+      updatedAt: Date.now(),
+    };
+    this.slots.set(normalized, updated);
+    return updated;
+  }
+
+  decrementLogicalPickStack(locationCode) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      throw new Error("Slot no encontrado");
+    }
+    const base = Number(slot.logicalPickStackDepth);
+    const depth = Number.isFinite(base) && base > 0 ? base : 1;
+    if (depth <= 1) {
+      throw new Error("logicalPickStackDepth no puede decrementarse por debajo de 1");
+    }
+    const updated = {
+      ...slot,
+      logicalPickStackDepth: depth - 1,
+      updatedAt: Date.now(),
+    };
     this.slots.set(normalized, updated);
     return updated;
   }
@@ -348,6 +412,7 @@ class StateManager {
       status: SLOT_STATUS.FREE,
       reservedByOrderId: null,
       currentBox: null,
+      logicalPickStackDepth: undefined,
       updatedAt: Date.now(),
       lastError: null,
     };

@@ -157,6 +157,20 @@ class OrchestratorService {
     }
 
     let slotLocationCode = input.slotLocationCode ? parseLocationCode(input.slotLocationCode).baseCode : null;
+    let steps = this.buildSteps(type);
+    let logicalPickOnly = false;
+    let logicalReturnOnly = false;
+
+    if (type === "PICK") {
+      const dupSlot = this.stateManager.findOccupiedPickSlotBySource(parsedLocation.baseCode);
+      if (dupSlot) {
+        this.stateManager.incrementLogicalPickStack(dupSlot.locationCode);
+        steps = [];
+        slotLocationCode = dupSlot.locationCode;
+        logicalPickOnly = true;
+      }
+    }
+
     if (type === "PUT") {
       slotLocationCode = parsedLocation.baseCode;
       const slot = this.stateManager.getSlot(slotLocationCode);
@@ -167,10 +181,15 @@ class OrchestratorService {
       if (slot.status !== SLOT_STATUS.OCCUPIED) {
         throw new Error("El slot no tiene cajon disponible para PUT");
       }
+
+      const stackDepth = this.stateManager.getLogicalPickStackDepth(slotLocationCode);
+      if (stackDepth > 1) {
+        this.stateManager.decrementLogicalPickStack(slotLocationCode);
+        steps = [];
+        logicalReturnOnly = true;
+      }
     }
 
-
-    const steps = this.buildSteps(type);
     const order = this.stateManager.createOrder({
       ...input,
       externalOrderId,
@@ -180,9 +199,11 @@ class OrchestratorService {
       targetLocation: parsedTarget ? parsedTarget.baseCode : null,
       slotLocationCode,
       steps,
+      logicalPickOnly,
+      logicalReturnOnly,
     });
 
-    if (type === "PUT" && slotLocationCode) {
+    if (type === "PUT" && slotLocationCode && !logicalReturnOnly) {
       const reserved = this.stateManager.reserveOccupiedSlotForPut(slotLocationCode, order.id);
       if (!reserved) {
         this.stateManager.updateOrder(order.id, { waitingForSlot: true });
@@ -271,6 +292,21 @@ class OrchestratorService {
     if (order.status === "DONE" || order.status === "ERROR" || order.status === "CANCELED") {
       this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
+      return;
+    }
+
+    if (order.logicalPickOnly || order.logicalReturnOnly) {
+      const meta = {
+        slotLocationCode: order.slotLocationCode || null,
+        kind: order.logicalPickOnly ? "PICK_ALREADY_IN_SLOT" : "PUT_LOGICAL_RETURN",
+      };
+      this.stateManager.pushOrderHistory(order.id, meta.kind, meta);
+      this.stateManager.updateOrder(order.id, { status: "DONE" });
+      this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
+      this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE", metadata: meta });
+      this.queueManager.clearActive(robotId);
+      this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
+      this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
     }
 
