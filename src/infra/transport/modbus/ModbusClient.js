@@ -8,9 +8,20 @@ class ModbusClient {
     this.timeoutMs = options.timeoutMs || 2000;
     this.client = new ModbusRTU();
     this.connected = false;
+    this.logger = options.logger || null;
+    this.connectionLabel = options.label || `${this.host}:${this.port}`;
+    /** Marca de tiempo tras connectTCP exitoso (para duración de sesión hasta close). */
+    this.tcpConnectedAt = null;
   }
 
   markDisconnected() {
+    if (this.connected) {
+      this.logger?.info?.("[modbus] marcado desconectado (bandera; puede seguir TCP hasta disconnect)", {
+        label: this.connectionLabel,
+        host: this.host,
+        port: this.port,
+      });
+    }
     this.connected = false;
   }
 
@@ -19,19 +30,55 @@ class ModbusClient {
       return;
     }
 
-    await this.client.connectTCP(this.host, { port: this.port });
-    this.client.setID(this.unitId);
-    this.client.setTimeout(this.timeoutMs);
-    this.connected = true;
+    const t0 = Date.now();
+    try {
+      await this.client.connectTCP(this.host, { port: this.port });
+      const handshakeMs = Date.now() - t0;
+      this.client.setID(this.unitId);
+      this.client.setTimeout(this.timeoutMs);
+      this.connected = true;
+      this.tcpConnectedAt = Date.now();
+      this.logger?.info?.("[modbus] tcp conectado", {
+        label: this.connectionLabel,
+        host: this.host,
+        port: this.port,
+        unitId: this.unitId,
+        handshakeMs,
+      });
+    } catch (error) {
+      this.logger?.warn?.("[modbus] tcp connect fallo", {
+        label: this.connectionLabel,
+        host: this.host,
+        port: this.port,
+        handshakeMs: Date.now() - t0,
+        error: error.message,
+      });
+      throw error;
+    }
   }
 
   async disconnect() {
-    if (!this.connected) {
+    if (this.tcpConnectedAt == null && !this.connected) {
       return;
     }
 
-    this.client.close(() => {});
+    const sessionMs = this.tcpConnectedAt != null ? Date.now() - this.tcpConnectedAt : null;
+    try {
+      this.client.close(() => {});
+    } catch (error) {
+      this.logger?.warn?.("[modbus] error al cerrar socket", {
+        label: this.connectionLabel,
+        error: error.message,
+      });
+    }
     this.connected = false;
+    this.tcpConnectedAt = null;
+    this.logger?.info?.("[modbus] tcp desconectado", {
+      label: this.connectionLabel,
+      host: this.host,
+      port: this.port,
+      sessionDurationMs: sessionMs,
+    });
   }
 
   async ensureConnected() {

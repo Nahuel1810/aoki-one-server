@@ -105,6 +105,8 @@ class ConnectionService {
           port: device.port || 502,
           unitId: device.unitId || 255,
           timeoutMs: device.timeoutMs || 2000,
+          label: key,
+          logger: this.logger,
         })
       );
     }
@@ -149,6 +151,7 @@ class ConnectionService {
   async recreateClient(device) {
     const key = this.deviceKey(device.robotId, device.type);
     const currentClient = this.clients.get(key);
+    const hadClient = Boolean(currentClient);
 
     if (currentClient) {
       try {
@@ -163,6 +166,14 @@ class ConnectionService {
     }
 
     this.clients.delete(key);
+
+    if (hadClient && !this.simulate) {
+      this.logger.info?.("[connection] cliente modbus eliminado del mapa (recrear / sustituir)", {
+        key,
+        robotId: device.robotId,
+        type: device.type,
+      });
+    }
   }
 
   /**
@@ -272,11 +283,13 @@ class ConnectionService {
       port: device.port || 502,
       unitId: device.unitId || 255,
     });
+    const t0 = Date.now();
     const client = await this.getClient(device);
     await client.connect();
     this.logger.info?.("[connection] device connected", {
       robotId: device.robotId,
       type: device.type,
+      connectTotalMs: Date.now() - t0,
     });
     this.deviceRegistry.updateStatus(device.robotId, device.type, "CONNECTED");
     this.stateManager.upsertDevice({ ...device, status: "CONNECTED", lastSeen: Date.now() });
