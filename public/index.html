@@ -596,6 +596,9 @@
 
       const VALID_PICK_SLOTS = [...RIGHT_PICK_SLOTS, ...LEFT_PICK_SLOTS];
 
+      /** Intervalo de actualización automática pedidos + slots + robots (solo HTTP a este servidor; no toca Modbus desde el navegador). */
+      const ORDERS_SLOTS_POLL_MS = 5000;
+
       const appState = {
         robots: [],
         devices: [],
@@ -745,6 +748,7 @@
           renderOrders();
           renderSlots();
           renderPutSlotOptions();
+          renderRobots();
         } catch (error) {
           setSyncError(error);
         } finally {
@@ -887,7 +891,7 @@
         const occupiedClass = occupied ? "slot-item--occupied" : "";
 
         return `
-          <article class="slot-item slot-item--interactive ${occupiedClass}" data-slot-code="${asSafe(slotCode)}" role="button" tabindex="0" title="Clic en la tarjeta para usar este slot como origen del PUT (devolución).">
+          <article class="slot-item slot-item--interactive ${occupiedClass}" data-slot-code="${asSafe(slotCode)}" role="button" tabindex="0" title="Clic: encolar PUT devolviendo el cajón al origen registrado (si el slot está ocupado y hay origen).">
             <div>
               <div class="slot-top">
                 <strong>${asSafe(source) || 'LIBRE'}</strong>
@@ -984,6 +988,44 @@
         }
       }
 
+      async function createPutOrderFromSlot(slotCode) {
+        const key = String(slotCode || "").trim().toUpperCase();
+        if (!key) {
+          throw new Error("Slot inválido.");
+        }
+
+        const map = slotMapByLocation();
+        const slot = map.get(key);
+        if (!slot || normalizeSlotStatus(slot.status) !== "OCUPADO") {
+          throw new Error("Este slot no está ocupado; no se puede devolver automáticamente.");
+        }
+
+        const origin = slot.currentBox && slot.currentBox.sourceLocationCode;
+        if (!origin || !String(origin).trim()) {
+          throw new Error("No hay origen del cajón en este slot; use devolución manual.");
+        }
+
+        const payload = {
+          type: "PUT",
+          locationCode: key,
+          targetLocation: String(origin).trim().toUpperCase(),
+        };
+
+        if (!VALID_PICK_SLOTS.includes(payload.locationCode)) {
+          throw new Error("El slot debe ser de pickeo válido.");
+        }
+
+        await apiJson("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        showStatus(orderStatus, true, `PUT encolado: cajón en ${payload.locationCode} → ${payload.targetLocation}.`);
+        renderPutSlotOptions();
+        await refreshOrdersData();
+      }
+
       async function createPutOrder(event) {
         event.preventDefault();
         try {
@@ -1052,8 +1094,11 @@
 
           const slotCard = event.target.closest(".slot-item[data-slot-code]");
           if (slotCard && !event.target.closest("button")) {
-            document.getElementById("putSourceSlot").value = slotCard.dataset.slotCode;
-            document.getElementById("putTargetLocation").focus();
+            try {
+              await createPutOrderFromSlot(slotCard.dataset.slotCode);
+            } catch (err) {
+              showStatus(orderStatus, false, err.message);
+            }
             return;
           }
 
@@ -1072,19 +1117,29 @@
           const card = event.target.closest(".slot-item[data-slot-code]");
           if (!card || event.target.closest("button")) return;
           event.preventDefault();
-          document.getElementById("putSourceSlot").value = card.dataset.slotCode;
-          document.getElementById("putTargetLocation").focus();
+          void createPutOrderFromSlot(card.dataset.slotCode).catch((err) => {
+            showStatus(orderStatus, false, err.message);
+          });
         });
+      }
+
+      function startOrdersAutoRefresh() {
+        setInterval(() => {
+          if (document.visibilityState !== "visible") return;
+          void refreshOrdersData();
+        }, ORDERS_SLOTS_POLL_MS);
       }
 
       async function bootstrap() {
         bindTabs();
         bindEvents();
-        renderRobots();
+        startOrdersAutoRefresh();
+        try {
+          await refreshOrdersData();
+        } catch (error) {
+          showStatus(orderStatus, false, error.message);
+        }
         renderDevices();
-        renderOrders();
-        renderSlots();
-        renderPutSlotOptions();
       }
 
       bootstrap().catch((error) => {
