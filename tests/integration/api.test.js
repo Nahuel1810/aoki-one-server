@@ -29,6 +29,26 @@ test("API health responde en modo simulacion", async () => {
   }
 });
 
+test("API GET /api/orders/queue/status devuelve snapshot (no confunde con /:id)", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const res = await fetch(toUrl(server, "/api/orders/queue/status"));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.ok(Array.isArray(body.data));
+  } finally {
+    server.close();
+  }
+});
+
 test("API permite registrar dispositivo y crear orden", async () => {
   const { app } = createApp({
     simulatePlc: true,
