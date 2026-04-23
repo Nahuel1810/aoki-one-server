@@ -131,6 +131,19 @@ class OrchestratorService {
       throw new Error("type invalido. Usar PICK o PUT");
     }
 
+    const hasExternalOrderId = input.id !== undefined && input.id !== null && String(input.id).trim() !== "";
+    const externalOrderId = hasExternalOrderId ? Number(input.id) : null;
+    if (hasExternalOrderId && (!Number.isFinite(externalOrderId) || !Number.isInteger(externalOrderId))) {
+      throw new Error("id debe ser numerico entero");
+    }
+
+    if (Number.isInteger(externalOrderId)) {
+      const existingOrder = this.stateManager.findOrderByExternalId(externalOrderId);
+      if (existingOrder) {
+        return existingOrder;
+      }
+    }
+
     if (hasLocationActionSuffix(input.locationCode)) {
       throw new Error("locationCode no debe incluir accion final (T/D/L). La accion se deriva desde type PICK/PUT");
     }
@@ -160,6 +173,7 @@ class OrchestratorService {
     const steps = this.buildSteps(type);
     const order = this.stateManager.createOrder({
       ...input,
+      externalOrderId,
       type,
       robotId,
       locationCode: parsedLocation.baseCode,

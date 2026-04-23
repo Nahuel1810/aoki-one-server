@@ -9,6 +9,30 @@ const {
 function createOrdersRoutes(services) {
   const router = express.Router();
 
+  function parseNumericOrderId(rawId) {
+    if (rawId === undefined || rawId === null || String(rawId).trim() === "") {
+      return null;
+    }
+
+    const value = Number(rawId);
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new Error("id debe ser numerico entero");
+    }
+
+    return value;
+  }
+
+  function createOrderResponsePayload(orderInput) {
+    const numericId = parseNumericOrderId(orderInput.id);
+    const existingOrder = Number.isInteger(numericId)
+      ? services.stateManager.findOrderByExternalId(numericId)
+      : null;
+
+    const order = services.orchestrator.submitOrder(orderInput);
+    const created = !existingOrder;
+    return { order, created };
+  }
+
   router.post("/simulate", (req, res) => {
     try {
       const body = req.body || {};
@@ -78,8 +102,23 @@ function createOrdersRoutes(services) {
 
   router.post("/", (req, res) => {
     try {
-      const order = services.orchestrator.submitOrder(req.body || {});
-      res.status(202).json({ ok: true, data: order });
+      const body = req.body || {};
+      const { order, created } = createOrderResponsePayload(body);
+      res.status(created ? 202 : 200).json({ ok: true, data: order, created });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.post("/pick", (req, res) => {
+    try {
+      const body = req.body || {};
+      const { order, created } = createOrderResponsePayload({
+        ...body,
+        type: "PICK",
+      });
+
+      res.status(created ? 202 : 200).json({ ok: true, data: order, created });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
     }

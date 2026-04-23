@@ -107,6 +107,29 @@ test("Orchestrator reintenta cuando PLC responde error reintentable", async () =
   assert.equal(fakeConnection.calls.length, 2);
 });
 
+test("Orchestrator no duplica orden si llega el mismo id externo", () => {
+  const fakeConnection = createFakeConnectionService();
+  const { orchestrator, queueManager } = buildOrchestrator(fakeConnection);
+
+  const first = orchestrator.submitOrder({
+    id: 1001,
+    type: "PICK",
+    robotId: "1",
+    locationCode: "3X04AA3",
+  });
+
+  const second = orchestrator.submitOrder({
+    id: 1001,
+    type: "PICK",
+    robotId: "1",
+    locationCode: "3X04AA3",
+  });
+
+  assert.equal(first.id, second.id);
+  assert.equal(queueManager.dequeueNext("1"), first.id);
+  assert.equal(queueManager.dequeueNext("1"), null);
+});
+
 test("Orchestrator no reintenta cuando PLC responde error 99", async () => {
   const fakeConnection = createFakeConnectionService({
     plan: [

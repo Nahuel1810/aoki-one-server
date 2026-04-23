@@ -96,6 +96,55 @@ test("API permite registrar dispositivo y crear orden", async () => {
   }
 });
 
+test("API /api/orders/pick deduplica por id numerico", async () => {
+  const { app } = createApp({
+    simulatePlc: true,
+    eventStore: new InMemoryEventStore(),
+    snapshotStore: new InMemorySnapshotStore(),
+  });
+
+  const server = app.listen(0);
+
+  try {
+    const firstRes = await fetch(toUrl(server, "/api/orders/pick"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: 2001,
+        locationCode: "3X04AA3",
+      }),
+    });
+    const firstData = await firstRes.json();
+
+    assert.equal(firstRes.status, 202);
+    assert.equal(firstData.ok, true);
+    assert.equal(firstData.created, true);
+
+    const secondRes = await fetch(toUrl(server, "/api/orders/pick"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: 2001,
+        locationCode: "3X04AA3",
+      }),
+    });
+    const secondData = await secondRes.json();
+
+    assert.equal(secondRes.status, 200);
+    assert.equal(secondData.ok, true);
+    assert.equal(secondData.created, false);
+    assert.equal(secondData.data.id, firstData.data.id);
+
+    const listRes = await fetch(toUrl(server, "/api/orders"));
+    const listData = await listRes.json();
+    assert.equal(listRes.status, 200);
+    assert.equal(listData.ok, true);
+    assert.equal(listData.data.length, 1);
+  } finally {
+    server.close();
+  }
+});
+
 test("API simula traduccion de ubicacion sin crear orden", async () => {
   const { app } = createApp({
     simulatePlc: true,

@@ -137,6 +137,7 @@ class StateManager {
     const now = Date.now();
     const order = {
       id: randomUUID(),
+      externalOrderId: Number.isInteger(input.externalOrderId) ? input.externalOrderId : null,
       type: input.type,
       status: "PENDING",
       priority: Number.isFinite(input.priority) ? input.priority : 0,
@@ -223,6 +224,20 @@ class StateManager {
 
   getOrder(orderId) {
     return this.orders.get(orderId) || null;
+  }
+
+  findOrderByExternalId(externalOrderId) {
+    if (!Number.isInteger(externalOrderId)) {
+      return null;
+    }
+
+    for (const order of this.orders.values()) {
+      if (order.externalOrderId === externalOrderId) {
+        return order;
+      }
+    }
+
+    return null;
   }
 
   listOrders() {
