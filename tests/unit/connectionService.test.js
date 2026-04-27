@@ -83,6 +83,41 @@ function createConnectionCheckService({ device, options = {} }) {
   return { service, updates };
 }
 
+function createOverlapDetectingClient({ delayMs = 25 } = {}) {
+  let active = 0;
+  let maxActive = 0;
+  const calls = [];
+
+  async function guardedCall(name, payload = {}) {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    calls.push({ name, ...payload });
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    active -= 1;
+  }
+
+  return {
+    stats() {
+      return { active, maxActive, calls: [...calls] };
+    },
+    async ensureConnected() {
+      await guardedCall("ensureConnected");
+    },
+    markDisconnected() {},
+    async writeSingleRegister(address, value) {
+      await guardedCall("writeSingleRegister", { address, value });
+    },
+    async readHoldingRegisters(address, length = 1) {
+      await guardedCall("readHoldingRegisters", { address, length });
+      return new Array(length).fill(123);
+    },
+    async readInputRegisters(address, length = 1) {
+      await guardedCall("readInputRegisters", { address, length });
+      return new Array(length).fill(0);
+    },
+  };
+}
+
 test("ConnectionService resetea messageIn1 y messageIn2 para CARRO", async () => {
   const service = createServiceWithDevice({ type: "CARRO" });
 
@@ -222,4 +257,81 @@ test("hardResetModbusTransport desconecta todos los clientes y limpia maps", asy
   assert.equal(service.clients.size, 0);
   assert.equal(service.connectionRecovery.size, 0);
   assert.equal(service.modbusRecreateStreakByDevice.size, 0);
+});
+
+test("ConnectionService serializa llamadas concurrentes sobre el mismo cliente Modbus", async () => {
+  const service = createServiceWithDevice({ type: "CARRO" });
+  const client = createOverlapDetectingClient({ delayMs: 20 });
+  service.getClient = async () => client;
+
+  const concurrentOps = Array.from({ length: 10 }, () =>
+    service.readVariable({
+      robotId: "1",
+      type: "CARRO",
+      variable: "messageIn",
+      length: 1,
+    })
+  );
+
+  const results = await Promise.all(concurrentOps);
+  const stats = client.stats();
+
+  assert.equal(results.length, 10);
+  assert.equal(stats.maxActive, 1);
+});
+
+test("checkRobotConnections omite monitor cuando orchestrator tiene prioridad", async () => {
+  const device = {
+    robotId: "1",
+    type: "CARRO",
+    host: "127.0.0.1",
+    port: 502,
+    unitId: 255,
+    registerMap: { messageIn: 0, messageOut: 0 },
+  };
+  const { service } = createConnectionCheckService({
+    device,
+    options: {
+      monitorPriorityResolver: () => true,
+    },
+  });
+
+  let ensureConnectedCalls = 0;
+  service.getClient = async () => ({
+    async ensureConnected() {
+      ensureConnectedCalls += 1;
+    },
+  });
+
+  await service.checkRobotConnections("1");
+  assert.equal(ensureConnectedCalls, 0);
+});
+
+test("checkRobotConnections omite ciclo si el lock del device ya esta ocupado", async () => {
+  const device = {
+    robotId: "1",
+    type: "CARRO",
+    host: "127.0.0.1",
+    port: 502,
+    unitId: 255,
+    registerMap: { messageIn: 0, messageOut: 0 },
+  };
+  const { service } = createConnectionCheckService({ device });
+  const key = service.deviceKey("1", "CARRO");
+
+  let ensureConnectedCalls = 0;
+  service.getClient = async () => ({
+    async ensureConnected() {
+      ensureConnectedCalls += 1;
+    },
+  });
+
+  const blockingOp = service.deviceMutex.run(key, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+
+  await service.checkRobotConnections("1");
+  await blockingOp;
+
+  assert.equal(ensureConnectedCalls, 0);
 });
