@@ -1,5 +1,6 @@
 const { ModbusClient } = require("../../infra/transport/modbus/ModbusClient");
 const { isConnectivityError } = require("../../infra/transport/modbus/modbusConnectivity");
+const { DeviceMutex } = require("../../infra/transport/modbus/DeviceMutex");
 const { decodeResponse } = require("../../config/plcProtocol");
 const { mergeRegisterMaps } = require("../../config/deviceRegisterMaps");
 
@@ -30,6 +31,12 @@ class ConnectionService {
     this.connectionRecovery = new Map();
     /** Recreaciones de cliente seguidas sin éxito Modbus por dispositivo (robotId:type) */
     this.modbusRecreateStreakByDevice = new Map();
+    /**
+     * Mutex por device key — serializa todas las operaciones Modbus sobre el
+     * mismo socket TCP para evitar intercalación de frames (root cause del
+     * problema de conectividad del CARRO).
+     */
+    this.deviceMutex = new DeviceMutex();
     const hardLimitEnv = process.env.MODBUS_HARD_RESET_AFTER_RECREATES_PER_DEVICE;
     this.modbusHardResetAfterRecreates =
       options.modbusHardResetAfterRecreates !== undefined && options.modbusHardResetAfterRecreates !== null
@@ -48,7 +55,13 @@ class ConnectionService {
       options.modbusHardResetExitProcess === true ||
       String(process.env.MODBUS_HARD_RESET_EXIT_PROCESS || "").toLowerCase() === "1" ||
       String(process.env.MODBUS_HARD_RESET_EXIT_PROCESS || "").toLowerCase() === "true";
+    this.monitorPriorityResolver =
+      typeof options.monitorPriorityResolver === "function" ? options.monitorPriorityResolver : null;
     this.monitorTimer = null;
+  }
+
+  setMonitorPriorityResolver(resolver) {
+    this.monitorPriorityResolver = typeof resolver === "function" ? resolver : null;
   }
 
   deviceKey(robotId, type) {
@@ -205,6 +218,7 @@ class ConnectionService {
     this.clients.clear();
     this.connectionRecovery.clear();
     this.modbusRecreateStreakByDevice.clear();
+    this.deviceMutex.clear();
 
     if (this.modbusHardResetCooldownMs > 0) {
       await this.sleep(this.modbusHardResetCooldownMs);
@@ -298,7 +312,15 @@ class ConnectionService {
   async checkRobotConnections(robotId) {
     const devices = this.deviceRegistry.listByRobot(robotId);
 
+    if (this.monitorPriorityResolver?.(robotId)) {
+      this.logger.info?.("[connection] monitor skipped: orchestrator has priority", {
+        robotId,
+      });
+      return;
+    }
+
     for (const device of devices) {
+      const key = this.deviceKey(robotId, device.type);
       const recovery = this.getRecoveryState(robotId, device.type);
 
       if (!this.simulate && recovery.nextRetryAt > Date.now()) {
@@ -330,30 +352,27 @@ class ConnectionService {
         continue;
       }
 
-      try {
-        if (this.simulate) {
-          this.clearRecoveryState(robotId, device.type);
-          this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED");
-          this.stateManager.upsertDevice({
-            ...device,
-            status: "CONNECTED",
-            lastSeen: Date.now(),
-            lastResponse: { connected: true, simulated: true },
-          });
-          continue;
-        }
-
-        const client = await this.getClient(device);
-        await client.ensureConnected();
+      if (this.simulate) {
         this.clearRecoveryState(robotId, device.type);
-        this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
-          lastResponse: { connected: true },
-        });
+        this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED");
         this.stateManager.upsertDevice({
           ...device,
           status: "CONNECTED",
           lastSeen: Date.now(),
-          lastResponse: { connected: true },
+          lastResponse: { connected: true, simulated: true },
+        });
+        continue;
+      }
+
+      // El monitor usa tryRun: si el orchestrator (o la API) ya tiene el
+      // socket ocupado para este device, se omite el ciclo en vez de
+      // encolar otra operación que intercalaría frames en el TCP socket.
+      let monitorResult = null;
+      try {
+        monitorResult = await this.deviceMutex.tryRun(key, async () => {
+          const client = await this.getClient(device);
+          await client.ensureConnected();
+          return { connected: true };
         });
       } catch (error) {
         this.logger.warn("[connection] connection check failed", {
@@ -394,7 +413,30 @@ class ConnectionService {
             consecutiveFailures: failure.consecutiveFailures,
           },
         });
+        continue;
       }
+
+      if (monitorResult === null) {
+        // Socket ocupado por orchestrator/API — saltar este ciclo del monitor.
+        this.logger.info?.("[connection] monitor skipped: device socket in use", {
+          robotId,
+          type: device.type,
+        });
+        continue;
+      }
+
+      // monitorResult es el valor resuelto de tryRun; si llegó acá sin lanzar,
+      // la conexión está bien.
+      this.clearRecoveryState(robotId, device.type);
+      this.deviceRegistry.updateStatus(robotId, device.type, "CONNECTED", {
+        lastResponse: { connected: true },
+      });
+      this.stateManager.upsertDevice({
+        ...device,
+        status: "CONNECTED",
+        lastSeen: Date.now(),
+        lastResponse: { connected: true },
+      });
 
       const latest = this.getDevice(robotId, device.type);
       if (latest?.lastSeen && Date.now() - latest.lastSeen > this.connectionTimeoutMs) {
@@ -482,17 +524,36 @@ class ConnectionService {
       throw new Error("runModbusOp no aplica en modo simulacion");
     }
 
+    const key = this.deviceKey(device.robotId, device.type);
+
+    // Serializa todas las operaciones Modbus para este dispositivo.
+    // Esto garantiza que nunca haya dos requests simultáneos sobre el
+    // mismo socket TCP (causa raíz de los errores de conectividad del CARRO).
+    return this.deviceMutex.run(key, () => this._runModbusOpInner(device, operation));
+  }
+
+  /**
+   * Implementación interna de runModbusOp (ya dentro del mutex).
+   * Nunca llamar directamente — usar runModbusOp.
+   */
+  async _runModbusOpInner(device, operation) {
     const innerAttempts = Number(process.env.MODBUS_CONNECTIVITY_INNER_ATTEMPTS || 3);
     const innerDelayMs = Number(process.env.MODBUS_CONNECTIVITY_INNER_DELAY_MS || 2000);
+    // Límite de rondas de recreación para evitar un loop infinito.
+    // Cuando se alcanza el hard limit se dispara hardResetModbusTransport
+    // (que opcionalmente reinicia el proceso), pero en ningún caso se
+    // queda en un while(true) sin salida posible.
+    const maxRecreateRounds = Math.max(1, this.modbusHardResetAfterRecreates || 10);
+    const streakKey = this.deviceKey(device.robotId, device.type);
 
-    while (true) {
+    for (let round = 0; round <= maxRecreateRounds; round += 1) {
       for (let i = 1; i <= innerAttempts; i += 1) {
         const client = await this.getClient(device);
         try {
           await client.ensureConnected();
           const result = await operation(client);
           this.clearRecoveryState(device.robotId, device.type);
-          this.modbusRecreateStreakByDevice.delete(this.deviceKey(device.robotId, device.type));
+          this.modbusRecreateStreakByDevice.delete(streakKey);
           return result;
         } catch (error) {
           if (!isConnectivityError(error)) {
@@ -503,6 +564,7 @@ class ConnectionService {
           this.logger.warn?.("[connection] modbus connectivity error, retrying", {
             robotId: device.robotId,
             type: device.type,
+            round,
             attempt: i,
             innerAttempts,
             message: error.message,
@@ -513,17 +575,19 @@ class ConnectionService {
         }
       }
 
-      const client = await this.getClient(device);
-      client.markDisconnected();
+      // Todos los intentos internos fallaron — recrea el cliente.
+      const clientToClose = await this.getClient(device);
+      clientToClose.markDisconnected();
       await this.recreateClient(device);
+
+      const streak = (this.modbusRecreateStreakByDevice.get(streakKey) || 0) + 1;
+      this.modbusRecreateStreakByDevice.set(streakKey, streak);
+
       this.logger.warn?.("[connection] modbus client recreated after connectivity errors", {
         robotId: device.robotId,
         type: device.type,
+        streak,
       });
-
-      const streakKey = this.deviceKey(device.robotId, device.type);
-      const streak = (this.modbusRecreateStreakByDevice.get(streakKey) || 0) + 1;
-      this.modbusRecreateStreakByDevice.set(streakKey, streak);
 
       const hardLimit = this.modbusHardResetAfterRecreates;
       if (hardLimit > 0 && streak >= hardLimit) {
@@ -532,8 +596,18 @@ class ConnectionService {
           type: device.type,
           recreateStreak: streak,
         });
+        // hardReset puede exit() el proceso; si no, lanzamos para que el
+        // caller (orchestrator) lleve el order a ERROR en vez de colgar.
+        throw new Error(
+          `[connection] Modbus hard reset ejecutado tras ${streak} recreaciones consecutivas (${device.robotId}:${device.type})`
+        );
       }
     }
+
+    // Si llegamos acá sin retornar, lanzamos para no colgar al caller.
+    throw new Error(
+      `[connection] Modbus op fallida tras ${maxRecreateRounds} rondas de recreación (${device.robotId}:${device.type})`
+    );
   }
 
   async writeResetMessageIn(device, deviceType, commandAddress) {

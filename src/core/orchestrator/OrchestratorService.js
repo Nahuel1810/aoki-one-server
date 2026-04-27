@@ -246,6 +246,10 @@ class OrchestratorService {
     this.timer = null;
   }
 
+  isRobotProcessing(robotId) {
+    return this.processingRobots.has(robotId);
+  }
+
   async tick() {
     const robots = this.stateManager.listRobots();
 

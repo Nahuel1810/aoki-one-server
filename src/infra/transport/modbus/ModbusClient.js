@@ -12,6 +12,14 @@ class ModbusClient {
     this.connectionLabel = options.label || `${this.host}:${this.port}`;
     /** Marca de tiempo tras connectTCP exitoso (para duración de sesión hasta close). */
     this.tcpConnectedAt = null;
+    /** Cola interna defensiva para serializar I/O sobre este socket. */
+    this.ioQueue = Promise.resolve();
+  }
+
+  async runSocketOp(operation) {
+    const next = this.ioQueue.then(() => operation());
+    this.ioQueue = next.catch(() => {});
+    return next;
   }
 
   markDisconnected() {
@@ -90,20 +98,26 @@ class ModbusClient {
   }
 
   async writeSingleRegister(address, value) {
-    await this.ensureConnected();
-    await this.client.writeRegister(address, value);
+    await this.runSocketOp(async () => {
+      await this.ensureConnected();
+      await this.client.writeRegister(address, value);
+    });
   }
 
   async readHoldingRegisters(address, length = 1) {
-    await this.ensureConnected();
-    const data = await this.client.readHoldingRegisters(address, length);
-    return data?.data || [];
+    return this.runSocketOp(async () => {
+      await this.ensureConnected();
+      const data = await this.client.readHoldingRegisters(address, length);
+      return data?.data || [];
+    });
   }
 
   async readInputRegisters(address, length = 1) {
-    await this.ensureConnected();
-    const data = await this.client.readInputRegisters(address, length);
-    return data?.data || [];
+    return this.runSocketOp(async () => {
+      await this.ensureConnected();
+      const data = await this.client.readInputRegisters(address, length);
+      return data?.data || [];
+    });
   }
 }
 

@@ -102,6 +102,10 @@ function createApp(options = {}) {
     eventStore,
   };
 
+  if (typeof connectionService.setMonitorPriorityResolver === "function") {
+    connectionService.setMonitorPriorityResolver((robotId) => orchestrator.isRobotProcessing(robotId));
+  }
+
   logger.info?.("[app] services ready", {
     apiEnabled: options.enableApi !== false,
     staticEnabled: options.enableStatic !== false,
