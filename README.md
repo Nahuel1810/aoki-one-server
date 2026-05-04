@@ -55,6 +55,12 @@ npm start
 
 ## API
 
+Documentacion interactiva:
+
+- Swagger UI: `GET /api-docs`
+- OpenAPI JSON: `GET /api-docs.json`
+- Logica de negocio y decisiones: `docs/business-logic.md`
+
 ### Salud
 
 - `GET /health`

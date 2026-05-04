@@ -222,12 +222,31 @@ test("Orchestrator asigna slot automaticamente en PICK", async () => {
   assert.equal(updated.slotLocationCode, "3X02AE1");
 });
 
-test("Orchestrator deja la orden en espera si no hay slots libres", async () => {
+test("Orchestrator marca DONE si el cajon ya fue identificado para el mismo origen", async () => {
   const fakeConnection = createFakeConnectionService();
   const { orchestrator, stateManager, queueManager } = buildOrchestrator(fakeConnection);
 
   stateManager.configurePickSlots(["3X02AE1"]);
   stateManager.markSlotOccupied("3X02AE1", "existing", { sourceLocationCode: "3X04AE1" });
+
+  const order = orchestrator.submitOrder({ type: "PICK", robotId: "1", locationCode: "3X04AE1" });
+  stateManager.upsertRobot({ id: "1", status: "IDLE", enabled: true });
+  queueManager.setActive("1", order.id);
+
+  await orchestrator.processOrder("1", order.id);
+
+  const updated = stateManager.getOrder(order.id);
+  assert.equal(updated.status, "DONE");
+  assert.equal(updated.waitingForSlot, false);
+  assert.equal(queueManager.isRobotBusy("1"), false);
+});
+
+test("Orchestrator deja la orden en espera si el pedido no coincide con los slots ocupados", async () => {
+  const fakeConnection = createFakeConnectionService();
+  const { orchestrator, stateManager, queueManager } = buildOrchestrator(fakeConnection);
+
+  stateManager.configurePickSlots(["3X02AE1"]);
+  stateManager.markSlotOccupied("3X02AE1", "existing", { sourceLocationCode: "8X04AE1" });
 
   const order = orchestrator.submitOrder({ type: "PICK", robotId: "1", locationCode: "3X04AE1" });
   stateManager.upsertRobot({ id: "1", status: "IDLE", enabled: true });

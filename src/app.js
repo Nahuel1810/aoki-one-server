@@ -1,5 +1,7 @@
 const express = require("express");
 const path = require("node:path");
+const YAML = require("yamljs");
+const swaggerUi = require("swagger-ui-express");
 const { QueueManager } = require("./core/queue/QueueManager");
 const { StateManager } = require("./core/state/StateManager");
 const { ErrorHandler } = require("./core/errors/ErrorHandler");
@@ -17,6 +19,16 @@ const { createSlotsRoutes } = require("./interfaces/api/slotsRoutes");
 
 function createApp(options = {}) {
   const app = express();
+  let openApiDocument = null;
+
+  try {
+    const openApiPath = path.join(__dirname, "../docs/openapi.yaml");
+    openApiDocument = YAML.load(openApiPath);
+  } catch (error) {
+    (options.logger || console).warn?.("[docs] openapi spec unavailable", {
+      error: error.message,
+    });
+  }
 
   if (options.enableJson !== false) {
     app.use(express.json());
@@ -116,6 +128,14 @@ function createApp(options = {}) {
     app.use("/api/orders", createOrdersRoutes(services));
     app.use("/api/devices", createDevicesRoutes(services));
     app.use("/api/slots", createSlotsRoutes(services));
+  }
+
+  if (openApiDocument) {
+    app.get("/api-docs.json", (req, res) => {
+      res.json(openApiDocument);
+    });
+
+    app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
   }
 
   if (typeof options.configureApp === "function") {

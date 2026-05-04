@@ -1,0 +1,897 @@
+openapi: 3.0.3
+info:
+  title: Aoki One Server API
+  version: 1.0.0
+  description: |
+    API HTTP para orquestacion de robots (CARRO + ELEVADOR) sobre Modbus TCP.
+
+    Esta especificacion cubre todos los endpoints expuestos por el servidor:
+    - Salud del servicio
+    - Registro y monitoreo de dispositivos
+    - Creacion y control de ordenes PICK/PUT
+    - Estado y liberacion manual de slots de pickeo
+
+    Seccion de logica de negocio y decisiones:
+    - Ver docs/business-logic.md dentro del repositorio.
+servers:
+  - url: http://localhost:3000
+    description: Desarrollo local
+tags:
+  - name: Health
+  - name: Orders
+  - name: Queue
+  - name: Devices
+  - name: Slots
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Healthcheck del servicio
+      responses:
+        '200':
+          description: Servicio disponible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/orders/simulate:
+    post:
+      tags: [Orders]
+      summary: Simula traduccion de locationCode a comandos sin crear orden
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderSimulationRequest'
+      responses:
+        '200':
+          description: Simulacion exitosa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderSimulationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/orders:
+    post:
+      tags: [Orders]
+      summary: Crea una orden PICK o PUT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateRequest'
+      responses:
+        '202':
+          description: Orden creada y encolada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreateResponse'
+        '200':
+          description: Orden ya existente (id externo duplicado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    get:
+      tags: [Orders]
+      summary: Lista ordenes
+      responses:
+        '200':
+          description: Lista de ordenes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+
+  /api/orders/pick:
+    post:
+      tags: [Orders]
+      summary: Crea orden forzando type PICK
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreatePickRequest'
+      responses:
+        '202':
+          description: Orden creada y encolada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreateResponse'
+        '200':
+          description: Orden ya existente (id externo duplicado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/orders/queue/status:
+    get:
+      tags: [Queue]
+      summary: Snapshot de colas por robot
+      responses:
+        '200':
+          description: Estado de colas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RobotQueueState'
+
+  /api/orders/queue/{robotId}/pause:
+    post:
+      tags: [Queue]
+      summary: Pausa la cola de un robot
+      parameters:
+        - $ref: '#/components/parameters/RobotId'
+      responses:
+        '200':
+          description: Cola pausada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePauseResumeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/orders/queue/{robotId}/resume:
+    post:
+      tags: [Queue]
+      summary: Reanuda la cola de un robot
+      parameters:
+        - $ref: '#/components/parameters/RobotId'
+      responses:
+        '200':
+          description: Cola reanudada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePauseResumeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Obtiene una orden por id interno
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Orden encontrada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/retry:
+    post:
+      tags: [Orders]
+      summary: Reintenta una orden en ERROR
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '202':
+          description: Orden reencolada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/orders/{id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Cancela una orden
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '202':
+          description: Orden cancelada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/devices/register:
+    post:
+      tags: [Devices]
+      summary: Registra un dispositivo Modbus para un robot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegisterRequest'
+      responses:
+        '201':
+          description: Dispositivo registrado y conectado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/devices:
+    get:
+      tags: [Devices]
+      summary: Lista dispositivos registrados
+      responses:
+        '200':
+          description: Lista de dispositivos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+
+  /api/devices/robots:
+    get:
+      tags: [Devices]
+      summary: Lista robots con cola y dispositivos asociados
+      responses:
+        '200':
+          description: Lista de robots enriquecida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RobotWithDevicesAndQueue'
+
+  /api/devices/{robotId}/{type}/command:
+    post:
+      tags: [Devices]
+      summary: Ejecuta comando directo sobre CARRO/ELEVADOR
+      parameters:
+        - $ref: '#/components/parameters/RobotId'
+        - $ref: '#/components/parameters/DeviceType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceCommandRequest'
+      responses:
+        '200':
+          description: Comando ejecutado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceCommandResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/devices/{robotId}/{type}/state:
+    get:
+      tags: [Devices]
+      summary: Lee estado de dispositivo CARRO/ELEVADOR
+      parameters:
+        - $ref: '#/components/parameters/RobotId'
+        - $ref: '#/components/parameters/DeviceType'
+      responses:
+        '200':
+          description: Estado del dispositivo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/slots:
+    get:
+      tags: [Slots]
+      summary: Lista slots de pickeo
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [LIBRE, RESERVADO, BUSCANDO, OCUPADO, DEVOLVIENDO, ERROR]
+          description: Filtra por estado del slot
+      responses:
+        '200':
+          description: Lista de slots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Slot'
+
+  /api/slots/{locationCode}/release:
+    post:
+      tags: [Slots]
+      summary: Libera manualmente un slot
+      parameters:
+        - name: locationCode
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Codigo de ubicacion del slot
+      responses:
+        '200':
+          description: Slot liberado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Slot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    RobotId:
+      name: robotId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Identificador logico del robot
+    OrderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: UUID interno de la orden
+    DeviceType:
+      name: type
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [CARRO, ELEVADOR, carro, elevador]
+      description: Tipo de dispositivo
+
+  responses:
+    BadRequest:
+      description: Error de validacion o regla de negocio
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        service:
+          type: string
+          example: aoki-one-server
+        ts:
+          type: integer
+          format: int64
+        mode:
+          type: string
+          enum: [simulation, modbus]
+
+    ErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: type invalido
+
+    OrderCreateRequest:
+      type: object
+      required: [type, locationCode]
+      properties:
+        id:
+          type: integer
+          description: Id externo para deduplicacion idempotente
+          example: 2001
+        type:
+          type: string
+          enum: [PICK, PUT]
+        locationCode:
+          type: string
+          example: 3X04AA3
+        targetLocation:
+          type: string
+          nullable: true
+          example: 9X01AA1
+        robotId:
+          type: string
+          nullable: true
+          example: '1'
+        priority:
+          type: integer
+          example: 0
+        slotLocationCode:
+          type: string
+          nullable: true
+          description: Override explicito de slot
+
+    OrderCreatePickRequest:
+      type: object
+      required: [locationCode]
+      properties:
+        id:
+          type: integer
+          description: Id externo para deduplicacion idempotente
+          example: 2001
+        locationCode:
+          type: string
+          example: 3X04AA3
+        targetLocation:
+          type: string
+          nullable: true
+        robotId:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+          example: 0
+        slotLocationCode:
+          type: string
+          nullable: true
+
+    OrderCreateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        created:
+          type: boolean
+          description: true si fue creada, false si ya existia por id externo
+        data:
+          $ref: '#/components/schemas/Order'
+
+    OrderSimulationRequest:
+      type: object
+      required: [type, locationCode]
+      properties:
+        type:
+          type: string
+          enum: [PICK, PUT]
+          default: PICK
+        locationCode:
+          type: string
+          description: Debe venir sin sufijo final T/D/L
+          example: 3X04AA3
+        robotId:
+          type: string
+          nullable: true
+          example: '1'
+
+    OrderSimulationResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            order:
+              type: object
+              properties:
+                id:
+                  type: string
+                  example: SIMULATION
+                type:
+                  type: string
+                  enum: [PICK, PUT]
+                robotId:
+                  type: string
+                locationCode:
+                  type: string
+            location:
+              type: object
+              additionalProperties: true
+            commandPreview:
+              type: object
+              additionalProperties: true
+            stepCommands:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        externalOrderId:
+          type: integer
+          nullable: true
+        type:
+          type: string
+          enum: [PICK, PUT]
+        status:
+          type: string
+          enum: [PENDING, IN_PROGRESS, DONE, ERROR, CANCELED]
+        priority:
+          type: integer
+        locationCode:
+          type: string
+        targetLocation:
+          type: string
+          nullable: true
+        currentStepIndex:
+          type: integer
+        robotId:
+          type: string
+        slotLocationCode:
+          type: string
+          nullable: true
+        waitingForSlot:
+          type: boolean
+        errorReason:
+          type: string
+          nullable: true
+        logicalPickOnly:
+          type: boolean
+        logicalReturnOnly:
+          type: boolean
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderStep'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderHistoryEntry'
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+
+    OrderStep:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          example: HOMING
+        deviceType:
+          type: string
+          enum: [CARRO, ELEVADOR]
+        status:
+          type: string
+          enum: [PENDING, IN_PROGRESS, DONE]
+        retries:
+          type: integer
+        startedAt:
+          type: integer
+          format: int64
+          nullable: true
+        finishedAt:
+          type: integer
+          format: int64
+          nullable: true
+
+    OrderHistoryEntry:
+      type: object
+      properties:
+        ts:
+          type: integer
+          format: int64
+        event:
+          type: string
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    DeviceRegisterRequest:
+      type: object
+      required: [robotId, type, host]
+      properties:
+        robotId:
+          type: string
+          example: '1'
+        type:
+          type: string
+          enum: [CARRO, ELEVADOR]
+        protocol:
+          type: string
+          enum: [single-register, split-message]
+          nullable: true
+        host:
+          type: string
+          example: 192.168.1.50
+        port:
+          type: integer
+          default: 502
+        unitId:
+          type: integer
+          default: 255
+        timeoutMs:
+          type: integer
+          default: 2000
+        registerMap:
+          type: object
+          properties:
+            messageIn:
+              type: integer
+              example: 0
+            messageOut:
+              type: integer
+              example: 1
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+          example: '1:CARRO'
+        robotId:
+          type: string
+        type:
+          type: string
+          enum: [CARRO, ELEVADOR]
+        protocol:
+          type: string
+          nullable: true
+        host:
+          type: string
+        port:
+          type: integer
+        unitId:
+          type: integer
+        timeoutMs:
+          type: integer
+        registerMap:
+          type: object
+          properties:
+            messageIn:
+              type: integer
+            messageOut:
+              type: integer
+        status:
+          type: string
+          example: CONNECTED
+        lastSeen:
+          type: integer
+          format: int64
+          nullable: true
+        lastCommand:
+          type: object
+          nullable: true
+          additionalProperties: true
+        lastResponse:
+          type: object
+          nullable: true
+          additionalProperties: true
+        updatedAt:
+          type: integer
+          format: int64
+
+    DeviceCommandRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: integer
+          description: Codigo numerico de comando PLC
+          example: 30201
+        expectedResponse:
+          type: integer
+          description: Respuesta esperada unica (legacy)
+          example: 100
+        expectedResponses:
+          type: array
+          description: Lista de respuestas esperadas
+          items:
+            type: integer
+          example: [100]
+
+    DeviceCommandResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            robotId:
+              type: string
+            type:
+              type: string
+              enum: [CARRO, ELEVADOR]
+            commandValue:
+              type: integer
+            response:
+              type: object
+              additionalProperties: true
+
+    RobotQueueState:
+      type: object
+      properties:
+        robotId:
+          type: string
+        activeOrderId:
+          type: string
+          nullable: true
+        queueLength:
+          type: integer
+        paused:
+          type: boolean
+        queuedOrderIds:
+          type: array
+          items:
+            type: string
+
+    RobotWithDevicesAndQueue:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          example: IDLE
+        currentOrderId:
+          type: string
+          nullable: true
+        mode:
+          type: string
+          example: AUTO
+        enabled:
+          type: boolean
+        updatedAt:
+          type: integer
+          format: int64
+        queue:
+          $ref: '#/components/schemas/RobotQueueState'
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+
+    QueuePauseResumeResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            robotId:
+              type: string
+            paused:
+              type: boolean
+
+    Slot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        locationCode:
+          type: string
+        status:
+          type: string
+          enum: [LIBRE, RESERVADO, BUSCANDO, OCUPADO, DEVOLVIENDO, ERROR]
+        reservedByOrderId:
+          type: string
+          nullable: true
+        currentBox:
+          type: object
+          nullable: true
+          additionalProperties: true
+        logicalPickStackDepth:
+          type: integer
+          nullable: true
+          description: Conteo logico de PICKs superpuestos sobre el mismo cajon
+        lastError:
+          type: string
+          nullable: true
+        updatedAt:
+          type: integer
+          format: int64

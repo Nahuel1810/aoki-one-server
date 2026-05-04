@@ -15,7 +15,9 @@
     "better-sqlite3": "^12.9.0",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "modbus-serial": "^8.0.23"
+    "modbus-serial": "^8.0.23",
+    "swagger-ui-express": "^5.0.1",
+    "yamljs": "^0.3.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

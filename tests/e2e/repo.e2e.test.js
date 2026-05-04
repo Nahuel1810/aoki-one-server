@@ -126,9 +126,10 @@ test("E2E: flujo completo API + orquestador en simulacion", async () => {
     assert.ok(Array.isArray(snapshotStore.last.orders));
     assert.ok(Array.isArray(snapshotStore.last.slots));
 
-    const occupiedSlot = snapshotStore.last.slots.find((slot) => slot.status === "OCCUPIED");
+    const occupiedSlot = snapshotStore.last.slots.find((slot) => slot.status === "OCUPADO");
     assert.ok(occupiedSlot);
-    assert.equal(occupiedSlot.locationCode, "3X02AE1");
+    // Prioriza mismo nivel (A) antes que niveles distintos; el candidato mas cercano es 3X02AA1
+    assert.equal(occupiedSlot.locationCode, "3X02AA1");
   } finally {
     await services.orchestrator.stop();
     await new Promise((resolve) => server.close(resolve));

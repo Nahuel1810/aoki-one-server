@@ -293,6 +293,25 @@ class OrchestratorService {
       return;
     }
 
+    // Runtime check: si estamos ejecutando un PICK y aún no tiene slot asignado,
+    // validar en el momento de ejecución si ya existe un slot OCCUPED con el
+    // mismo sourceLocationCode. En ese caso, convertir la orden a logicalPick
+    // (incrementar contador y marcar pasos vacíos) para evitar duplicar movimiento físico.
+    if (order.type === "PICK" && !order.logicalPickOnly && !order.slotLocationCode) {
+      const dupSlot = this.stateManager.findOccupiedPickSlotBySource(order.locationCode);
+      if (dupSlot) {
+        this.stateManager.incrementLogicalPickStack(dupSlot.locationCode);
+        this.stateManager.pushOrderHistory(order.id, "PICK_ALREADY_IN_SLOT", { locationCode: dupSlot.locationCode });
+        this.stateManager.updateOrder(order.id, {
+          slotLocationCode: dupSlot.locationCode,
+          steps: [],
+          logicalPickOnly: true,
+        });
+        // refrescar la referencia local para que el resto del flujo lo vea
+        order = this.stateManager.getOrder(orderId);
+      }
+    }
+
     if (order.status === "DONE" || order.status === "ERROR" || order.status === "CANCELED") {
       this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
