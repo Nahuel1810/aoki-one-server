@@ -93,13 +93,13 @@ class OrchestratorService {
     };
   }
 
-  rehydrateFromSnapshot(snapshot) {
+  async rehydrateFromSnapshot(snapshot) {
     if (!snapshot) {
       return;
     }
 
     this.stateManager.hydrateFromSnapshot(snapshot);
-    this.queueManager.clear();
+    await this.queueManager.clear();
 
     const orders = this.stateManager.listOrders().sort((a, b) => a.createdAt - b.createdAt);
     for (const order of orders) {
@@ -112,7 +112,7 @@ class OrchestratorService {
       }
 
       if (currentStatus === "PENDING") {
-        this.queueManager.enqueue({ ...order, status: "PENDING" });
+        await this.queueManager.enqueue({ ...order, status: "PENDING" });
       }
     }
 
@@ -125,7 +125,7 @@ class OrchestratorService {
     this.eventStore.append({ entityType: "SYSTEM", entityId: "orchestrator", event: "SNAPSHOT_REHYDRATED" });
   }
 
-  submitOrder(input) {
+  async submitOrder(input) {
     const type = String(input.type || "PICK").toUpperCase();
     if (!["PICK", "PUT"].includes(type)) {
       throw new Error("type invalido. Usar PICK o PUT");
@@ -219,7 +219,7 @@ class OrchestratorService {
     }
 
     this.stateManager.upsertRobot({ id: robotId, status: "IDLE", enabled: true });
-    this.queueManager.enqueue(order);
+    await this.queueManager.enqueue(order);
     this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_ENQUEUED" });
     this.snapshotStore.save(this.stateManager.getSnapshot());
     return order;
@@ -262,15 +262,15 @@ class OrchestratorService {
         continue;
       }
 
-      if (!this.queueManager.isRobotBusy(robot.id)) {
-        const nextOrderId = this.queueManager.dequeueNext(robot.id);
+      if (!(await this.queueManager.isRobotBusy(robot.id))) {
+        const nextOrderId = await this.queueManager.dequeueNext(robot.id);
         if (nextOrderId) {
-          this.queueManager.setActive(robot.id, nextOrderId);
+          await this.queueManager.setActive(robot.id, nextOrderId);
           this.stateManager.upsertRobot({ id: robot.id, status: "BUSY", currentOrderId: nextOrderId });
         }
       }
 
-      const queueState = this.queueManager.ensureRobot(robot.id);
+      const queueState = await this.queueManager.ensureRobot(robot.id);
       if (!queueState.activeOrderId) {
         continue;
       }
@@ -289,7 +289,7 @@ class OrchestratorService {
   async processOrder(robotId, orderId) {
     let order = this.stateManager.getOrder(orderId);
     if (!order) {
-      this.queueManager.clearActive(robotId);
+      await this.queueManager.clearActive(robotId);
       return;
     }
 
@@ -313,7 +313,7 @@ class OrchestratorService {
     }
 
     if (order.status === "DONE" || order.status === "ERROR" || order.status === "CANCELED") {
-      this.queueManager.clearActive(robotId);
+      await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
       return;
     }
@@ -327,7 +327,7 @@ class OrchestratorService {
       this.stateManager.updateOrder(order.id, { status: "DONE" });
       this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
       this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE", metadata: meta });
-      this.queueManager.clearActive(robotId);
+      await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
@@ -336,7 +336,7 @@ class OrchestratorService {
     if (order.type === "PICK" && !order.slotLocationCode) {
       const assignedSlot = this.assignSlotForPickOrder(order);
       if (!assignedSlot) {
-        this.deferOrderWaitingForSlot(order, robotId);
+        await this.deferOrderWaitingForSlot(order, robotId);
         return;
       }
 
@@ -396,7 +396,7 @@ class OrchestratorService {
       this.stateManager.updateOrder(order.id, { status: "DONE" });
       this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
       this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE" });
-      this.queueManager.clearActive(robotId);
+      await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
@@ -422,7 +422,7 @@ class OrchestratorService {
         step: currentStep.type,
         error: executed.error?.message,
       });
-      this.queueManager.clearActive(robotId);
+      await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "ERROR", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
       return;
@@ -462,7 +462,7 @@ class OrchestratorService {
     return null;
   }
 
-  deferOrderWaitingForSlot(order, robotId) {
+  async deferOrderWaitingForSlot(order, robotId) {
     if (!order.waitingForSlot) {
       this.stateManager.pushOrderHistory(order.id, "ORDER_WAITING_FOR_SLOT", {
         reason: "NO_PICK_SLOT_AVAILABLE",
@@ -475,8 +475,8 @@ class OrchestratorService {
       waitingForSlot: true,
     });
 
-    this.queueManager.clearActive(robotId);
-    this.queueManager.enqueue(updated);
+    await this.queueManager.clearActive(robotId);
+    await this.queueManager.enqueue(updated);
     this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
     this.snapshotStore.save(this.stateManager.getSnapshot());
   }
@@ -569,20 +569,20 @@ class OrchestratorService {
       waitingForSlot: false,
     });
 
-    this.queueManager.enqueue(updated);
+    await this.queueManager.enqueue(updated);
     this.stateManager.upsertRobot({ id: updated.robotId, status: "IDLE", currentOrderId: null });
     this.eventStore.append({ entityType: "ORDER", entityId: orderId, event: "ORDER_RETRIED" });
     this.snapshotStore.save(this.stateManager.getSnapshot());
     return updated;
   }
 
-  cancelOrder(orderId) {
+  async cancelOrder(orderId) {
     const order = this.stateManager.getOrder(orderId);
     if (!order) {
       return null;
     }
 
-    this.queueManager.removeOrder(order.robotId, order.id);
+    await this.queueManager.removeOrder(order.robotId, order.id);
 
     if (order.slotLocationCode) {
       const slot = this.stateManager.getSlot(order.slotLocationCode);

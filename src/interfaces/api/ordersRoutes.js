@@ -22,13 +22,13 @@ function createOrdersRoutes(services) {
     return value;
   }
 
-  function createOrderResponsePayload(orderInput) {
+  async function createOrderResponsePayload(orderInput) {
     const numericId = parseNumericOrderId(orderInput.id);
     const existingOrder = Number.isInteger(numericId)
       ? services.stateManager.findOrderByExternalId(numericId)
       : null;
 
-    const order = services.orchestrator.submitOrder(orderInput);
+    const order = await services.orchestrator.submitOrder(orderInput);
     const created = !existingOrder;
     return { order, created };
   }
@@ -100,20 +100,20 @@ function createOrdersRoutes(services) {
     }
   });
 
-  router.post("/", (req, res) => {
+  router.post("/", async (req, res) => {
     try {
       const body = req.body || {};
-      const { order, created } = createOrderResponsePayload(body);
+      const { order, created } = await createOrderResponsePayload(body);
       res.status(created ? 202 : 200).json({ ok: true, data: order, created });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
     }
   });
 
-  router.post("/pick", (req, res) => {
+  router.post("/pick", async (req, res) => {
     try {
       const body = req.body || {};
-      const { order, created } = createOrderResponsePayload({
+      const { order, created } = await createOrderResponsePayload({
         ...body,
         type: "PICK",
       });
@@ -128,12 +128,16 @@ function createOrdersRoutes(services) {
     res.json({ ok: true, data: services.stateManager.listOrders() });
   });
 
-  router.get("/queue/status", (req, res) => {
-    const snapshot = services.queueManager.getSnapshot();
-    res.json({ ok: true, data: snapshot });
+  router.get("/queue/status", async (req, res) => {
+    try {
+      const snapshot = await services.queueManager.getSnapshot();
+      res.json({ ok: true, data: snapshot });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
   });
 
-  router.post("/queue/:robotId/pause", (req, res) => {
+  router.post("/queue/:robotId/pause", async (req, res) => {
     try {
       const robotId = String(req.params.robotId || "").trim();
       if (!robotId) {
@@ -141,14 +145,14 @@ function createOrdersRoutes(services) {
         return;
       }
 
-      services.queueManager.pauseQueue(robotId);
+      await services.queueManager.pauseQueue(robotId);
       res.json({ ok: true, data: { robotId, paused: true } });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
     }
   });
 
-  router.post("/queue/:robotId/resume", (req, res) => {
+  router.post("/queue/:robotId/resume", async (req, res) => {
     try {
       const robotId = String(req.params.robotId || "").trim();
       if (!robotId) {
@@ -156,7 +160,7 @@ function createOrdersRoutes(services) {
         return;
       }
 
-      services.queueManager.resumeQueue(robotId);
+      await services.queueManager.resumeQueue(robotId);
       res.json({ ok: true, data: { robotId, paused: false } });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -187,14 +191,18 @@ function createOrdersRoutes(services) {
     }
   });
 
-  router.post("/:id/cancel", (req, res) => {
-    const order = services.orchestrator.cancelOrder(req.params.id);
-    if (!order) {
-      res.status(404).json({ ok: false, error: "Order no encontrada" });
-      return;
-    }
+  router.post("/:id/cancel", async (req, res) => {
+    try {
+      const order = await services.orchestrator.cancelOrder(req.params.id);
+      if (!order) {
+        res.status(404).json({ ok: false, error: "Order no encontrada" });
+        return;
+      }
 
-    res.status(202).json({ ok: true, data: order });
+      res.status(202).json({ ok: true, data: order });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
   });
 
   return router;

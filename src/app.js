@@ -3,6 +3,7 @@ const path = require("node:path");
 const YAML = require("yamljs");
 const swaggerUi = require("swagger-ui-express");
 const { QueueManager } = require("./core/queue/QueueManager");
+const { RedisQueueManager } = require("./core/queue/RedisQueueManager");
 const { StateManager } = require("./core/state/StateManager");
 const { ErrorHandler } = require("./core/errors/ErrorHandler");
 const { DeviceRegistry } = require("./core/connection/DeviceRegistry");
@@ -39,7 +40,22 @@ function createApp(options = {}) {
   }
 
   const logger = options.logger || console;
-  const queueManager = options.queueManager || new QueueManager();
+
+  let queueManager = options.queueManager;
+  if (!queueManager) {
+    const queueDriver = String(options.queueDriver || process.env.QUEUE_DRIVER || "memory").toLowerCase();
+    if (queueDriver === "redis") {
+      queueManager = new RedisQueueManager({
+        url: options.redisUrl || process.env.REDIS_URL,
+        prefix: options.redisQueuePrefix || process.env.REDIS_QUEUE_PREFIX || "aoki-one",
+        logger,
+      });
+      logger.info?.("[app] queue driver: redis", { prefix: queueManager.prefix });
+    } else {
+      queueManager = new QueueManager();
+      logger.info?.("[app] queue driver: memory");
+    }
+  }
   const pickSlots = resolvePickSlotsConfig(options);
   const stateManager = options.stateManager || new StateManager({ pickSlots });
   const errorHandler = options.errorHandler || new ErrorHandler({ logger });
