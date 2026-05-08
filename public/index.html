@@ -256,6 +256,8 @@
       .slot-item.slot-item--blank {
         display: flex;
         flex-direction: column;
+        justify-content: center;
+        align-items: center;
         background: #fff;
         border-color: var(--border);
         box-shadow: none;
@@ -263,7 +265,8 @@
       }
 
       .slot-item.slot-item--blank .slot-blank-fill {
-        flex: 1 0 auto;
+        flex: 0 0 auto;
+        width: 100%;
         min-height: calc(2 * 1.2em + 28px);
       }
 
@@ -509,23 +512,51 @@
 
       .slot-item .slot-top {
         flex-direction: column;
-        align-items: stretch;
-        justify-content: flex-start;
+        align-items: center;
+        justify-content: center;
         flex-wrap: nowrap;
         gap: 10px;
+        text-align: center;
       }
 
       .slot-item .slot-top .slot-headline {
         width: 100%;
+        text-align: center;
       }
 
       .slot-item .slot-top .status-pill {
-        align-self: flex-start;
+        align-self: center;
       }
 
       .order-item.active {
         border-color: #3aa56f;
         box-shadow: 0 0 0 2px rgba(58, 165, 111, 0.15);
+      }
+
+      .list .order-item {
+        padding: 8px 10px;
+      }
+
+      .order-item .order-top {
+        gap: 6px;
+      }
+
+      .order-item .order-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 12px;
+        margin-top: 5px;
+        font-size: 12px;
+      }
+
+      .order-item .actions {
+        margin-top: 6px;
+      }
+
+      .order-item .actions button {
+        padding: 5px 8px;
+        font-size: 12px;
       }
 
       .order-meta,
@@ -557,9 +588,21 @@
         min-height: 0;
         display: flex;
         flex-direction: column;
-        justify-content: flex-start;
+        justify-content: center;
+        align-items: stretch;
         cursor: default;
         padding: 7px 6px;
+      }
+
+      /* Centra ubicación + badge en el alto de la celda del grid */
+      .slot-item:not(.slot-item--blank) > div {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        min-height: 0;
       }
 
       /* Misma tipografía para “—” y para código de ubicación (alineación del grid). */
@@ -572,6 +615,7 @@
         display: block;
         min-height: calc(2 * 1.2em);
         color: inherit;
+        text-align: center;
       }
 
       .slot-item .status-pill {
@@ -866,20 +910,34 @@
         return (appState.orders || []).find((o) => String(o.id) === id) || null;
       }
 
-      /** HTML interno (ya escapado) para trayendo / devolviendo. */
-      function getSlotMotionInnerHtml(slot, canon) {
-        if (!slot || !isSlotIntermediateStatus(canon)) return "";
-        const order = findOrderById(slot.reservedByOrderId);
-        if (!order) {
-          return `<div class="slot-motion-code slot-motion-code--alone">${asSafe("Pedido en curso (sin detalle)")}</div>`;
+      /** Ubicación principal del slot: ocupado = origen del cajón; con pedido PICK = desde dónde se trae; PUT = hacia dónde va el cajón. */
+      function getSlotDisplayLocation(slot, canon) {
+        if (!slot) return "—";
+        if (canon === "OCUPADO") {
+          const s = slot.currentBox && slot.currentBox.sourceLocationCode;
+          return String(s || "").trim() || "—";
         }
+        const order = findOrderById(slot.reservedByOrderId);
+        if (!order) return "—";
         if (order.type === "PICK") {
-          const loc = String(order.locationCode || "").trim() || "—";
-          return `<div class="slot-motion-label">Trayendo desde</div><div class="slot-motion-code">${asSafe(loc)}</div>`;
+          return String(order.locationCode || "").trim() || "—";
         }
         if (order.type === "PUT") {
-          const loc = String(order.targetLocation || "").trim() || "—";
-          return `<div class="slot-motion-label">Devolviendo a</div><div class="slot-motion-code">${asSafe(loc)}</div>`;
+          return String(order.targetLocation || "").trim() || "—";
+        }
+        return "—";
+      }
+
+      /** Badge solo en ejecución (Buscando / Guardando) o error; ocupado y reservado sin texto en pill. */
+      function getSlotPillHtml(statusRaw, canon) {
+        if (canon === "BUSCANDO") {
+          return `<span class="status-pill ${slotStatusClass(statusRaw)}">${asSafe("Buscando")}</span>`;
+        }
+        if (canon === "DEVOLVIENDO") {
+          return `<span class="status-pill ${slotStatusClass(statusRaw)}">${asSafe("Guardando")}</span>`;
+        }
+        if (canon === "ERROR") {
+          return `<span class="status-pill ${slotStatusClass(statusRaw)}">${asSafe(slotStatusLabel(statusRaw))}</span>`;
         }
         return "";
       }
@@ -900,6 +958,24 @@
           CANCELED: "Cancelado",
         };
         return labels[status] || status;
+      }
+
+      /** Etiquetas de tipo de pedido en la UI (API sigue usando PICK / PUT). */
+      function orderTypeUiLabel(typeRaw) {
+        const t = String(typeRaw || "").trim().toUpperCase();
+        if (t === "PICK") return "BUSCAR";
+        if (t === "PUT") return "GUARDAR";
+        return String(typeRaw || "").trim() || "—";
+      }
+
+      /** En cola: PICK muestra origen; PUT muestra destino de la devolución (igual criterio que el slot). */
+      function orderQueueLocationLabel(order) {
+        const t = String(order.type || "").trim().toUpperCase();
+        if (t === "PUT") {
+          const tgt = String(order.targetLocation || "").trim();
+          if (tgt) return tgt;
+        }
+        return String(order.locationCode || "").trim() || "—";
       }
 
       function asSafe(text) {
@@ -1191,13 +1267,13 @@
             return `
               <article class="order-item ${isActive ? "active" : ""}">
                 <div class="order-top">
-                  <strong>${asSafe(order.type)} | ${asSafe(order.locationCode)}</strong>
+                  <strong>${asSafe(orderTypeUiLabel(order.type))} | ${asSafe(orderQueueLocationLabel(order))}</strong>
                   <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(orderStatusLabel(order.status))}</span>
                 </div>
                 <div class="order-meta">
-                  <div>Robot: ${asSafe(order.robotId || "sin asignar")}</div>
-                  <div>Paso: ${Number(order.currentStepIndex || 0) + 1} / ${Array.isArray(order.steps) ? order.steps.length : 0}</div>
-                  <div>Creado: hace ${timeAgo(order.createdAt)}</div>
+                  <span>Paso: ${Number(order.currentStepIndex || 0) + 1} / ${Array.isArray(order.steps) ? order.steps.length : 0}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Creado: hace ${timeAgo(order.createdAt)}</span>
                 </div>
                 <div class="actions">
                   <button class="ghost" type="button" data-action="retry" data-id="${asSafe(order.id)}">Reintentar</button>
@@ -1222,24 +1298,20 @@
         const statusRaw = slot ? slot.status : null;
         const canon = normalizeSlotStatus(statusRaw);
         const isBlankFree = canon === "LIBRE" || !slot;
-        const pillClass = !slot ? "status-muted" : slotStatusClass(statusRaw);
-        const source = slot && slot.currentBox && slot.currentBox.sourceLocationCode
-          ? slot.currentBox.sourceLocationCode
-          : "—";
+        const displayLoc = slot ? getSlotDisplayLocation(slot, canon) : "—";
+        const pillHtml = slot ? getSlotPillHtml(statusRaw, canon) : "";
         const occupied = canon === "OCUPADO";
         const intermediate = isSlotIntermediateStatus(canon);
         const occupiedClass = occupied ? "slot-item--occupied" : "";
         const intermediateClass = intermediate ? "slot-item--intermediate" : "";
         const blankClass = isBlankFree && !intermediate ? "slot-item--blank" : "";
-        const motionInner = intermediate ? getSlotMotionInnerHtml(slot, canon) : "";
-        const motionHtml = motionInner ? `<div class="slot-motion">${motionInner}</div>` : "";
         const interactive = occupied;
         const interactiveClass = interactive ? "slot-item--interactive" : "";
         const a11y = interactive
-          ? `role="button" tabindex="0" title="Clic: encolar PUT devolviendo el cajón al origen registrado."`
+          ? `role="button" tabindex="0" title="Clic: encolar GUARDAR (devolver el cajón al origen registrado)."`
           : isBlankFree && !intermediate
             ? `aria-label="Slot libre"`
-            : `role="group" title="${asSafe(slotStatusLabel(statusRaw))}"`;
+            : `role="group" title="${asSafe(displayLoc)}"`;
 
         if (isBlankFree && !intermediate) {
           return `
@@ -1249,19 +1321,15 @@
         `;
         }
 
-        const topExtraClass = intermediate ? " slot-top--state-only" : "";
-        const strongHtml = intermediate
-          ? ""
-          : `<strong class="slot-headline">${asSafe(source || "—")}</strong>`;
+        const strongHtml = `<strong class="slot-headline">${asSafe(displayLoc)}</strong>`;
 
         return `
           <article class="slot-item ${interactiveClass} ${occupiedClass} ${intermediateClass}" data-slot-code="${asSafe(slotCode)}" ${a11y}>
             <div>
-              <div class="slot-top${topExtraClass}">
+              <div class="slot-top">
                 ${strongHtml}
-                <span class="status-pill ${pillClass}">${asSafe(slotStatusLabel(statusRaw))}</span>
+                ${pillHtml}
               </div>
-              ${motionHtml}
             </div>
           </article>
         `;
@@ -1370,7 +1438,7 @@
             body: JSON.stringify(payload),
           });
 
-          showStatus(orderStatus, true, `PICK encolado para ${payload.locationCode}.`);
+          showStatus(orderStatus, true, `BUSCAR encolado para ${payload.locationCode}.`);
           event.target.reset();
           await refreshOrdersData();
         } catch (error) {
@@ -1411,7 +1479,7 @@
           body: JSON.stringify(payload),
         });
 
-        showStatus(orderStatus, true, `PUT encolado: cajón en ${payload.locationCode} → ${payload.targetLocation}.`);
+        showStatus(orderStatus, true, `GUARDAR encolado: cajón en ${payload.locationCode} → ${payload.targetLocation}.`);
         renderPutSlotOptions();
         await refreshOrdersData();
       }
@@ -1426,7 +1494,7 @@
           };
 
           if (!VALID_PICK_SLOTS.includes(payload.locationCode)) {
-            throw new Error("El origen del PUT debe ser un slot de pickeo válido.");
+            throw new Error("El origen debe ser un slot de pickeo válido.");
           }
 
           await apiJson("/api/orders", {
@@ -1435,7 +1503,7 @@
             body: JSON.stringify(payload),
           });
 
-          showStatus(orderStatus, true, `PUT encolado desde ${payload.locationCode} hacia ${payload.targetLocation}.`);
+          showStatus(orderStatus, true, `GUARDAR encolado desde ${payload.locationCode} hacia ${payload.targetLocation}.`);
           event.target.reset();
           renderPutSlotOptions();
           await refreshOrdersData();
