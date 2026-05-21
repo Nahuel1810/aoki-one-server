@@ -28,6 +28,10 @@ class OrchestratorService {
 
     this.processingRobots = new Set();
     this.timer = null;
+    this.started = false;
+    // Cuando hay loops activos, el tick se vuelve no-op por robot. Estas
+    // promesas guardan referencia al loop por si se quiere observar/await.
+    this.activeLoops = new Map();
   }
 
   getOrderLocationContext(order) {
@@ -178,10 +182,10 @@ class OrchestratorService {
         throw new Error("PUT requiere locationCode de zona pickeo configurada");
       }
 
-      if (slot.status !== SLOT_STATUS.OCCUPIED) {
-        throw new Error("El slot no tiene cajon disponible para PUT");
-      }
-
+      // Nota: se acepta PUT tanto sobre slots OCUPADO (devolución normal)
+      // como sobre slots LIBRE (devolución manual de cajón físico
+      // fuera-de-libros). Slots RESERVADO/BUSCANDO/DEVOLVIENDO/ERROR
+      // quedarán en waitingForSlot al intentar reservarlos más abajo.
       const stackDepth = this.stateManager.getLogicalPickStackDepth(slotLocationCode);
       if (stackDepth > 1) {
         this.stateManager.decrementLogicalPickStack(slotLocationCode);
@@ -204,16 +208,20 @@ class OrchestratorService {
     });
 
     if (type === "PUT" && slotLocationCode && !logicalReturnOnly) {
-      const reserved = this.stateManager.reserveOccupiedSlotForPut(slotLocationCode, order.id);
+      const reserved = this.stateManager.reserveSlotForPut(slotLocationCode, order.id);
       if (!reserved) {
         this.stateManager.updateOrder(order.id, { waitingForSlot: true });
       } else {
-        this.stateManager.pushOrderHistory(order.id, "SLOT_RESERVED", { locationCode: slotLocationCode });
+        const meta = {
+          locationCode: slotLocationCode,
+          previousStatus: reserved.previousStatus,
+        };
+        this.stateManager.pushOrderHistory(order.id, "SLOT_RESERVED", meta);
         this.eventStore.append({
           entityType: "SLOT",
           entityId: slotLocationCode,
           event: "SLOT_RESERVED",
-          metadata: { orderId: order.id, type: "PUT" },
+          metadata: { orderId: order.id, type: "PUT", previousStatus: reserved.previousStatus },
         });
       }
     }
@@ -222,6 +230,11 @@ class OrchestratorService {
     await this.queueManager.enqueue(order);
     this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_ENQUEUED" });
     this.snapshotStore.save(this.stateManager.getSnapshot());
+
+    // Kick inmediato: si el robot no esta procesando, dispara el loop ahora
+    // mismo en vez de esperar al proximo tick (elimina latencia inicial).
+    this.kickRobot(robotId);
+
     return order;
   }
 
@@ -230,14 +243,24 @@ class OrchestratorService {
       return;
     }
 
+    this.started = true;
     this.timer = setInterval(() => {
       this.tick().catch((error) => {
         this.logger.error("[orchestrator] tick failed", error);
       });
     }, this.config.tickMs);
+
+    // Despertar inmediatamente cualquier robot que ya tenga trabajo
+    // (rehidratado desde snapshot, por ejemplo).
+    for (const robot of this.stateManager.listRobots()) {
+      if (robot.enabled !== false) {
+        this.kickRobot(robot.id);
+      }
+    }
   }
 
   async stop() {
+    this.started = false;
     if (!this.timer) {
       return;
     }
@@ -251,6 +274,9 @@ class OrchestratorService {
   }
 
   async tick() {
+    // El tick actua solo como fallback: arranca un loop por cada robot que
+    // este IDLE y enabled, pero NO impulsa steps de robots que ya estan en
+    // loop activo (esos avanzan solos sin esperar al tick).
     const robots = this.stateManager.listRobots();
 
     for (const robot of robots) {
@@ -258,31 +284,105 @@ class OrchestratorService {
         continue;
       }
 
-      if (this.processingRobots.has(robot.id)) {
-        continue;
-      }
+      this.tryDispatchRobot(robot.id);
+    }
+  }
 
-      if (!(await this.queueManager.isRobotBusy(robot.id))) {
-        const nextOrderId = await this.queueManager.dequeueNext(robot.id);
-        if (nextOrderId) {
-          await this.queueManager.setActive(robot.id, nextOrderId);
-          this.stateManager.upsertRobot({ id: robot.id, status: "BUSY", currentOrderId: nextOrderId });
-        }
-      }
+  /**
+   * Arranca (si no esta ya corriendo) el loop de procesamiento para un robot.
+   * Es idempotente: si el robot ya tiene un loop activo, no hace nada.
+   * Llamar desde tick, submitOrder, retryOrder o cuando llegue trabajo nuevo.
+   */
+  kickRobot(robotId) {
+    if (!this.started) {
+      // No autoejecutar antes de start(); preserva el comportamiento de tests
+      // que llaman submitOrder y luego inspeccionan la cola.
+      return;
+    }
+    this.tryDispatchRobot(robotId);
+  }
 
-      const queueState = await this.queueManager.ensureRobot(robot.id);
-      if (!queueState.activeOrderId) {
-        continue;
-      }
+  tryDispatchRobot(robotId) {
+    if (!this.started) {
+      return;
+    }
 
-      this.processingRobots.add(robot.id);
-      this.processOrder(robot.id, queueState.activeOrderId)
-        .catch((error) => {
-          this.logger.error("[orchestrator] process order failed", error);
-        })
-        .finally(() => {
-          this.processingRobots.delete(robot.id);
+    if (this.processingRobots.has(robotId)) {
+      return;
+    }
+
+    this.processingRobots.add(robotId);
+    const loopPromise = this.runRobotLoop(robotId)
+      .catch((error) => {
+        this.logger.error("[orchestrator] robot loop failed", {
+          robotId,
+          error: error?.message || String(error),
         });
+      })
+      .finally(() => {
+        this.processingRobots.delete(robotId);
+        this.activeLoops.delete(robotId);
+      });
+    this.activeLoops.set(robotId, loopPromise);
+  }
+
+  /**
+   * Loop continuo por robot: encadena steps y ordenes sin pasar por el tick.
+   * Sale cuando:
+   *  - no hay orden activa ni nada para dequeuear (queue vacia)
+   *  - la orden quedo en ERROR (robot pasa a ERROR, no se sigue)
+   *  - la orden se difirio (PENDING por waitingForSlot)
+   */
+  async runRobotLoop(robotId) {
+    // Loop infinito controlado por breaks explicitos para cubrir cada
+    // condicion de salida de manera legible.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const robot = this.stateManager.getRobot
+        ? this.stateManager.getRobot(robotId)
+        : this.stateManager.listRobots().find((r) => r.id === robotId);
+
+      if (robot && robot.enabled === false) {
+        return;
+      }
+
+      let queueState = await this.queueManager.ensureRobot(robotId);
+      let activeOrderId = queueState.activeOrderId;
+
+      if (!activeOrderId) {
+        const nextOrderId = await this.queueManager.dequeueNext(robotId);
+        if (!nextOrderId) {
+          return;
+        }
+
+        await this.queueManager.setActive(robotId, nextOrderId);
+        this.stateManager.upsertRobot({ id: robotId, status: "BUSY", currentOrderId: nextOrderId });
+        activeOrderId = nextOrderId;
+      }
+
+      await this.processOrder(robotId, activeOrderId);
+
+      const order = this.stateManager.getOrder(activeOrderId);
+      if (!order) {
+        continue;
+      }
+
+      // ERROR: el robot quedo en estado ERROR; no levantamos mas trabajo
+      // hasta que llegue un retry explicito (que dispara kickRobot).
+      if (order.status === "ERROR") {
+        return;
+      }
+
+      // PENDING: la orden se difirio (p.ej. waitingForSlot). Salimos y dejamos
+      // que el proximo tick o un kick externo (release de slot) la retome.
+      if (order.status === "PENDING") {
+        return;
+      }
+
+      // IN_PROGRESS: el step se completo, hay mas steps. Continuamos el loop
+      // y volvemos a llamar a processOrder con la misma orden activa.
+      // DONE / CANCELED: la orden termino; el loop intenta dequeuear la siguiente.
+      // En cualquier caso, no rompemos: la proxima iteracion decide.
     }
   }
 
@@ -573,6 +673,10 @@ class OrchestratorService {
     this.stateManager.upsertRobot({ id: updated.robotId, status: "IDLE", currentOrderId: null });
     this.eventStore.append({ entityType: "ORDER", entityId: orderId, event: "ORDER_RETRIED" });
     this.snapshotStore.save(this.stateManager.getSnapshot());
+
+    // Disparar el loop inmediatamente para no esperar al proximo tick.
+    this.kickRobot(updated.robotId);
+
     return updated;
   }
 

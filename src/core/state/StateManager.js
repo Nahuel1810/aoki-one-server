@@ -400,6 +400,38 @@ class StateManager {
     return updated;
   }
 
+  /**
+   * Reserva un slot para PUT tolerando dos casos:
+   * - OCUPADO: devolución estándar (cajón en libros).
+   * - LIBRE: devolución manual de cajón físico fuera-de-libros
+   *   (p.ej. tras liberar el slot manualmente con un cajón aún apoyado).
+   * Rechaza slots en RESERVADO / BUSCANDO / DEVOLVIENDO / ERROR.
+   * Devuelve el slot actualizado, o null si no se pudo reservar; expone
+   * previousStatus en metadata para que el caller registre el evento.
+   */
+  reserveSlotForPut(locationCode, orderId) {
+    const normalized = normalizeLocationCode(locationCode);
+    const slot = this.slots.get(normalized);
+    if (!slot) {
+      return null;
+    }
+    if (slot.status !== SLOT_STATUS.FREE && slot.status !== SLOT_STATUS.OCCUPIED) {
+      return null;
+    }
+
+    const previousStatus = slot.status;
+    const updated = {
+      ...slot,
+      status: SLOT_STATUS.RESERVED,
+      reservedByOrderId: orderId,
+      updatedAt: Date.now(),
+      lastError: null,
+    };
+
+    this.slots.set(normalized, updated);
+    return { slot: updated, previousStatus };
+  }
+
   releaseSlot(locationCode) {
     const normalized = normalizeLocationCode(locationCode);
     const slot = this.slots.get(normalized);

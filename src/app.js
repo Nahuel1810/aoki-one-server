@@ -3,7 +3,7 @@ const path = require("node:path");
 const YAML = require("yamljs");
 const swaggerUi = require("swagger-ui-express");
 const { QueueManager } = require("./core/queue/QueueManager");
-const { RedisQueueManager } = require("./core/queue/RedisQueueManager");
+const { ExternalQueueManager } = require("./core/queue/ExternalQueueManager");
 const { StateManager } = require("./core/state/StateManager");
 const { ErrorHandler } = require("./core/errors/ErrorHandler");
 const { DeviceRegistry } = require("./core/connection/DeviceRegistry");
@@ -44,18 +44,19 @@ function createApp(options = {}) {
   let queueManager = options.queueManager;
   if (!queueManager) {
     const queueDriver = String(options.queueDriver || process.env.QUEUE_DRIVER || "memory").toLowerCase();
-    if (queueDriver === "redis") {
-      queueManager = new RedisQueueManager({
-        url: options.redisUrl || process.env.REDIS_URL,
-        prefix: options.redisQueuePrefix || process.env.REDIS_QUEUE_PREFIX || "aoki-one",
-        logger,
-      });
-      logger.info?.("[app] queue driver: redis", { prefix: queueManager.prefix });
+    if (queueDriver === "external") {
+      const externalQueueUrl = options.externalQueueUrl || process.env.EXTERNAL_QUEUE_URL;
+      if (!externalQueueUrl) {
+        throw new Error("[app] QUEUE_DRIVER=external requiere EXTERNAL_QUEUE_URL");
+      }
+      queueManager = new ExternalQueueManager({ baseUrl: externalQueueUrl, logger });
+      logger.info?.("[app] queue driver: external", { url: externalQueueUrl });
     } else {
       queueManager = new QueueManager();
       logger.info?.("[app] queue driver: memory");
     }
   }
+
   const pickSlots = resolvePickSlotsConfig(options);
   const stateManager = options.stateManager || new StateManager({ pickSlots });
   const errorHandler = options.errorHandler || new ErrorHandler({ logger });

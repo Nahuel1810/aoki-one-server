@@ -1,7 +1,26 @@
+/**
+ * @abstract In-memory queue manager — base class for all queue drivers.
+ *
+ * All public methods are async-compatible (sync implementations that return
+ * plain values work transparently with `await`). Subclasses should override
+ * every public method to connect to an external backend.
+ *
+ * @example
+ * // Simulation / testing
+ * const queue = new QueueManager();
+ *
+ * // Production — external backend
+ * class MyQueue extends QueueManager {
+ *   async enqueue(order) { ... }
+ *   // ... override the rest
+ * }
+ */
 class QueueManager {
   constructor() {
     this.byRobot = new Map();
   }
+
+  // ── State helpers ─────────────────────────────────────────────
 
   clear() {
     this.byRobot.clear();
@@ -14,6 +33,8 @@ class QueueManager {
 
     return this.byRobot.get(robotId);
   }
+
+  // ── Queue operations ──────────────────────────────────────────
 
   enqueue(order) {
     const state = this.ensureRobot(order.robotId);
@@ -90,6 +111,14 @@ class QueueManager {
 
     return snapshot;
   }
+
+  // ── Lifecycle ─────────────────────────────────────────────────
+
+  /**
+   * Release any external connections. No-op for in-memory driver.
+   * Subclasses should override this to close Redis/HTTP connections.
+   */
+  async disconnect() {}
 }
 
 module.exports = {

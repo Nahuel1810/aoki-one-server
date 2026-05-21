@@ -22,7 +22,7 @@ test("Se puede inyectar ConnectionService fake sin tocar orquestador", async () 
 
   assert.equal(services.connectionService, fakeConnection);
 
-  const order = services.orchestrator.submitOrder({
+  const order = await services.orchestrator.submitOrder({
     type: "PICK",
     robotId: "9",
     locationCode: "9X04AA3",

@@ -58,8 +58,17 @@ Estados de slot:
 - Si no hay slot libre, la orden vuelve a `PENDING` con `waitingForSlot=true`.
 
 ### 4.2 PUT
-- Debe apuntar a un slot configurado y `OCUPADO`.
-- Si el slot no tiene cajon disponible, se rechaza.
+- Debe apuntar a un slot configurado (de zona de pickeo).
+- Acepta dos estados de origen:
+  - `OCUPADO`: devolucion normal del cajon registrado en libros.
+  - `LIBRE`: devolucion manual de cajon fisico fuera-de-libros (p.ej. tras liberar
+    el slot manualmente con un cajon aun apoyado).
+- Si el slot esta en `RESERVADO`, `BUSCANDO`, `DEVOLVIENDO` o `ERROR`, la orden
+  se crea pero queda con `waitingForSlot=true` hasta que el slot vuelva a estar
+  reservable.
+- Cuando ya hay un PICK logico apilado sobre el slot (`logicalPickStackDepth > 1`),
+  el PUT se finaliza como devolucion logica (sin maniobra fisica) decrementando el
+  contador.
 
 ## 5) Por que una orden puede saltar a DONE
 
