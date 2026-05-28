@@ -419,14 +419,17 @@ class OrchestratorService {
     }
 
     if (order.logicalPickOnly || order.logicalReturnOnly) {
+      const finishedAt = Date.now();
+      order = this.ensureStartedProcessingAt(order, finishedAt);
       const meta = {
         slotLocationCode: order.slotLocationCode || null,
         kind: order.logicalPickOnly ? "PICK_ALREADY_IN_SLOT" : "PUT_LOGICAL_RETURN",
       };
       this.stateManager.pushOrderHistory(order.id, meta.kind, meta);
-      this.stateManager.updateOrder(order.id, { status: "DONE" });
+      order = this.stateManager.updateOrder(order.id, { status: "DONE" });
       this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
       this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE", metadata: meta });
+      this.recordOrderMetrics(order, "DONE", finishedAt);
       await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
@@ -457,7 +460,8 @@ class OrchestratorService {
       this.stateManager.updateOrder(order.id, { waitingForSlot: false });
     }
 
-    this.stateManager.updateOrder(order.id, { status: "IN_PROGRESS" });
+    const startedAtPatch = !order.startedProcessingAt ? { startedProcessingAt: Date.now() } : {};
+    order = this.stateManager.updateOrder(order.id, { status: "IN_PROGRESS", ...startedAtPatch });
     if (order.slotLocationCode && order.currentStepIndex === 0) {
       if (order.type === "PICK") {
         this.stateManager.markSlotPickInProgress(order.slotLocationCode, order.id);
@@ -493,9 +497,12 @@ class OrchestratorService {
         });
       }
 
-      this.stateManager.updateOrder(order.id, { status: "DONE" });
+      const finishedAt = Date.now();
+      order = this.ensureStartedProcessingAt(order, finishedAt);
+      order = this.stateManager.updateOrder(order.id, { status: "DONE" });
       this.stateManager.pushOrderHistory(order.id, "ORDER_DONE");
       this.eventStore.append({ entityType: "ORDER", entityId: order.id, event: "ORDER_DONE" });
+      this.recordOrderMetrics(order, "DONE", finishedAt);
       await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "IDLE", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
@@ -514,7 +521,9 @@ class OrchestratorService {
         });
       }
 
-      this.stateManager.updateOrder(order.id, {
+      const finishedAt = Date.now();
+      order = this.ensureStartedProcessingAt(order, finishedAt);
+      order = this.stateManager.updateOrder(order.id, {
         status: "ERROR",
         errorReason: executed.error?.message || "step failed",
       });
@@ -522,6 +531,7 @@ class OrchestratorService {
         step: currentStep.type,
         error: executed.error?.message,
       });
+      this.recordOrderMetrics(order, "ERROR", finishedAt);
       await this.queueManager.clearActive(robotId);
       this.stateManager.upsertRobot({ id: robotId, status: "ERROR", currentOrderId: null });
       this.snapshotStore.save(this.stateManager.getSnapshot());
@@ -701,10 +711,44 @@ class OrchestratorService {
       }
     }
 
-    const updated = this.stateManager.updateOrder(orderId, { status: "CANCELED" });
+    const finishedAt = Date.now();
+    const started = this.ensureStartedProcessingAt(order, finishedAt);
+    const updated = this.stateManager.updateOrder(orderId, { status: "CANCELED", startedProcessingAt: started.startedProcessingAt });
     this.eventStore.append({ entityType: "ORDER", entityId: orderId, event: "ORDER_CANCELED" });
+    this.recordOrderMetrics(updated, "CANCELED", finishedAt);
     this.stateManager.upsertRobot({ id: updated.robotId, status: "IDLE", currentOrderId: null });
     return updated;
+  }
+
+  ensureStartedProcessingAt(order, fallbackTs = Date.now()) {
+    if (order.startedProcessingAt) {
+      return order;
+    }
+    return this.stateManager.updateOrder(order.id, { startedProcessingAt: fallbackTs }) || order;
+  }
+
+  recordOrderMetrics(order, statusOverride, finishedAt) {
+    if (!this.eventStore || typeof this.eventStore.insertMetrics !== "function") {
+      return;
+    }
+
+    const createdAt = Number(order.createdAt || finishedAt);
+    const startedAt = Number(order.startedProcessingAt);
+    const safeStartedAt = Number.isFinite(startedAt) && startedAt > 0 ? startedAt : finishedAt;
+    const waitingMs = Math.max(0, safeStartedAt - createdAt);
+    const durationMs = Math.max(0, finishedAt - safeStartedAt);
+
+    this.eventStore.insertMetrics({
+      orderId: order.id,
+      origin: order.origin,
+      type: order.type,
+      locationCode: order.slotLocationCode || order.locationCode,
+      waitingMs,
+      durationMs,
+      status: statusOverride || order.status,
+      createdAt,
+      finishedAt,
+    });
   }
 }
 

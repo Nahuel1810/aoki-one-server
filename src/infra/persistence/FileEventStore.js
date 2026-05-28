@@ -14,6 +14,19 @@ class FileEventStore {
     const line = `${JSON.stringify({ ...event, ts: Date.now() })}\n`;
     fs.appendFileSync(this.filePath, line, "utf8");
   }
+
+  insertMetrics(m) {
+    // No-op para persistencia legacy basada en archivos
+  }
+
+  getMetricsReport() {
+    return {
+      total: 0,
+      summary: { totalManoeuvres: 0, pickingOrders: 0 },
+      byLocation: [],
+      items: [],
+    };
+  }
 }
 
 module.exports = {

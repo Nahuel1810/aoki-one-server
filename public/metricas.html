@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aoki One | Métricas</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap");
+
+      :root {
+        --bg: #0f1318;
+        --panel: rgba(22, 28, 34, 0.92);
+        --panel-strong: rgba(28, 34, 41, 0.96);
+        --ink: #f1f3f5;
+        --muted: rgba(198, 208, 220, 0.68);
+        --line: rgba(108, 130, 152, 0.18);
+        --accent: #6ccfbd;
+        --accent-2: #c9b28a;
+        --accent-3: #6c8ed6;
+        --danger: #ff6b6b;
+        --shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+        --radius-xl: 22px;
+        --radius-lg: 18px;
+        --radius-md: 14px;
+        --font-display: "Sora", "Segoe UI", sans-serif;
+        --font-body: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--font-body);
+        background:
+          radial-gradient(circle at 15% 20%, rgba(108, 207, 189, 0.12), transparent 55%),
+          radial-gradient(circle at 85% 0%, rgba(108, 142, 214, 0.12), transparent 50%),
+          linear-gradient(180deg, #0f1419 0%, #101821 100%);
+        min-height: 100vh;
+      }
+
+      .noise {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.035;
+        mix-blend-mode: soft-light;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.25'/%3E%3C/svg%3E");
+      }
+
+      .grid {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(90, 120, 150, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(90, 120, 150, 0.04) 1px, transparent 1px);
+        background-size: 120px 120px;
+        mask-image: radial-gradient(circle at 40% 15%, rgba(0, 0, 0, 0.6), transparent 70%);
+      }
+
+      .shell {
+        width: min(1200px, 92vw);
+        margin: 36px auto 60px;
+        position: relative;
+        z-index: 2;
+        display: grid;
+        gap: 20px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.3fr 0.7fr;
+        gap: 18px;
+        align-items: center;
+        padding: 26px 28px;
+        border-radius: var(--radius-xl);
+        background: linear-gradient(140deg, rgba(24, 31, 38, 0.94), rgba(19, 25, 31, 0.94));
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -80px;
+        top: -120px;
+        width: 220px;
+        height: 220px;
+        background: radial-gradient(circle, rgba(108, 142, 214, 0.16), transparent 70%);
+        filter: blur(2px);
+      }
+
+      .hero-title {
+        margin: 0;
+        font-family: var(--font-display);
+        font-size: clamp(28px, 3.2vw, 40px);
+        line-height: 1.05;
+        letter-spacing: 0.01em;
+      }
+
+      .hero-subtitle {
+        margin: 10px 0 0;
+        color: var(--muted);
+        max-width: 520px;
+        font-size: 14px;
+      }
+
+      .hero-stats {
+        display: grid;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.015);
+        border: 1px solid rgba(108, 142, 214, 0.12);
+        border-radius: var(--radius-lg);
+        padding: 16px;
+      }
+
+      .hero-stats small {
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        font-size: 10px;
+        color: rgba(166, 197, 226, 0.7);
+      }
+
+      .hero-stats strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .panel {
+        padding: 22px;
+        border-radius: var(--radius-lg);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+      }
+
+      .filters {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        align-items: end;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(180, 205, 228, 0.7);
+        margin-bottom: 8px;
+      }
+
+      input[type="date"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(123, 150, 173, 0.3);
+        background: rgba(12, 16, 22, 0.65);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      button {
+        width: 100%;
+        padding: 12px 16px;
+        border-radius: var(--radius-md);
+        border: 0;
+        font: inherit;
+        font-weight: 700;
+        color: #0b141a;
+        background: linear-gradient(120deg, var(--accent), #86dbcc);
+        cursor: pointer;
+        box-shadow: 0 10px 20px rgba(108, 207, 189, 0.2);
+      }
+
+      button.secondary {
+        background: rgba(18, 27, 36, 0.7);
+        color: var(--ink);
+        border: 1px solid rgba(108, 142, 214, 0.2);
+        box-shadow: none;
+      }
+
+      .filters-foot {
+        margin-top: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .kpi {
+        padding: 20px;
+        border-radius: var(--radius-lg);
+        background: var(--panel-strong);
+        border: 1px solid rgba(108, 142, 214, 0.16);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .kpi::after {
+        content: "";
+        position: absolute;
+        right: -40px;
+        top: -50px;
+        width: 110px;
+        height: 110px;
+        background: radial-gradient(circle, rgba(108, 207, 189, 0.14), transparent 70%);
+      }
+
+      .kpi h3 {
+        margin: 0;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(185, 210, 230, 0.8);
+      }
+
+      .kpi-value {
+        margin-top: 12px;
+        font-size: clamp(28px, 3.5vw, 40px);
+        font-family: var(--font-display);
+      }
+
+      .kpi-note {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .kpi.alt {
+        border-color: rgba(201, 178, 138, 0.24);
+      }
+
+      .kpi.alt::after {
+        background: radial-gradient(circle, rgba(201, 178, 138, 0.16), transparent 70%);
+      }
+
+      .list-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .list-head h2 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+        max-height: 420px;
+        overflow: auto;
+        padding-right: 6px;
+      }
+
+      .list-item {
+        display: grid;
+        grid-template-columns: 160px 1fr 80px;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: var(--radius-md);
+        background: rgba(12, 16, 22, 0.6);
+        border: 1px solid rgba(108, 140, 168, 0.16);
+        align-items: center;
+      }
+
+      .list-item strong {
+        font-size: 14px;
+      }
+
+      .list-item small {
+        color: var(--muted);
+      }
+
+      .bar {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        overflow: hidden;
+      }
+
+      .bar > span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), rgba(108, 142, 214, 0.6));
+      }
+
+      .empty {
+        padding: 16px;
+        border-radius: var(--radius-md);
+        border: 1px dashed rgba(123, 150, 173, 0.3);
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(108, 142, 214, 0.14);
+        border: 1px solid rgba(108, 142, 214, 0.2);
+        font-size: 12px;
+        color: #d3e0ff;
+      }
+
+      @media (max-width: 960px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+        .filters {
+          grid-template-columns: 1fr;
+        }
+        .kpi-grid {
+          grid-template-columns: 1fr;
+        }
+        .list-item {
+          grid-template-columns: 1fr;
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="noise"></div>
+    <div class="grid"></div>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <h1 class="hero-title">Métricas operativas</h1>
+          <p class="hero-subtitle">
+            Seguimiento de maniobras y demanda de cajones. Selecciona un rango y actualiza para ver el comportamiento de la
+            operación con precisión temporal.
+          </p>
+        </div>
+        <div class="hero-stats">
+          <small>Rango actual</small>
+          <strong id="rangeLabel">—</strong>
+          <span class="pill" id="rangeDelta">Sin filtros activos</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <form id="metricsForm" class="filters">
+          <div>
+            <label for="dateFrom">Desde</label>
+            <input id="dateFrom" type="date" required />
+          </div>
+          <div>
+            <label for="dateTo">Hasta</label>
+            <input id="dateTo" type="date" required />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button type="submit">Siguiente</button>
+          </div>
+        </form>
+        <div class="filters-foot">
+          <span id="statusLine">Listo para consultar.</span>
+          <button type="button" class="secondary" id="toggleListBtn">Ocultar lista</button>
+        </div>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="kpi">
+          <h3>Maniobras ejecutadas</h3>
+          <div class="kpi-value" id="kpiManiobras">—</div>
+          <div class="kpi-note">Cada PICK o PUT finalizado en el rango seleccionado.</div>
+        </article>
+        <article class="kpi alt">
+          <h3>Pedidos desde picking</h3>
+          <div class="kpi-value" id="kpiPicking">—</div>
+          <div class="kpi-note">Órdenes originadas por el sistema externo.</div>
+        </article>
+      </section>
+
+      <section class="panel" id="locationsPanel">
+        <div class="list-head">
+          <div>
+            <h2>Cajones solicitados</h2>
+            <p style="margin: 6px 0 0; color: var(--muted); font-size: 13px;">
+              Veces que cada cajón fue pedido dentro del rango de fechas.
+            </p>
+          </div>
+          <span class="pill" id="locationsCount">0 cajones</span>
+        </div>
+        <div id="locationsEmpty" class="empty hidden">No hay datos para el rango seleccionado.</div>
+        <div id="locationsList" class="list"></div>
+        <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
+          <button type="button" class="secondary hidden" id="showMoreBtn">Mostrar todo</button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("metricsForm");
+      const dateFrom = document.getElementById("dateFrom");
+      const dateTo = document.getElementById("dateTo");
+      const kpiManiobras = document.getElementById("kpiManiobras");
+      const kpiPicking = document.getElementById("kpiPicking");
+      const statusLine = document.getElementById("statusLine");
+      const rangeLabel = document.getElementById("rangeLabel");
+      const rangeDelta = document.getElementById("rangeDelta");
+      const locationsList = document.getElementById("locationsList");
+      const locationsEmpty = document.getElementById("locationsEmpty");
+      const locationsCount = document.getElementById("locationsCount");
+      const showMoreBtn = document.getElementById("showMoreBtn");
+      const toggleListBtn = document.getElementById("toggleListBtn");
+      const locationsPanel = document.getElementById("locationsPanel");
+
+      let showAll = false;
+      const SHOW_LIMIT = 12;
+      let currentByLocation = [];
+      let currentSummary = { totalManoeuvres: 0, pickingOrders: 0 };
+
+      function formatDateLabel(value) {
+        return new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" }).format(value);
+      }
+
+      function toStartOfDay(value) {
+        const date = new Date(value);
+        date.setHours(0, 0, 0, 0);
+        return date.getTime();
+      }
+
+      function toEndOfDay(value) {
+        const date = new Date(value);
+        date.setHours(23, 59, 59, 999);
+        return date.getTime();
+      }
+
+      function setStatus(ok, message) {
+        statusLine.textContent = message;
+        statusLine.style.color = ok ? "#86dbcc" : "var(--danger)";
+      }
+
+      async function apiJson(url) {
+        const res = await fetch(url);
+        const payload = await res.json();
+        if (!res.ok || payload.ok === false) {
+          throw new Error(payload.error || `Error ${res.status}`);
+        }
+        return payload.data;
+      }
+
+      function renderKpis(summary) {
+        kpiManiobras.textContent = summary.totalManoeuvres.toLocaleString("es-AR");
+        kpiPicking.textContent = summary.pickingOrders.toLocaleString("es-AR");
+      }
+
+      function buildByLocationFromItems(items) {
+        const counts = new Map();
+        (items || []).forEach((row) => {
+          const code = String(row.locationCode || "").trim();
+          if (!code) return;
+          counts.set(code, (counts.get(code) || 0) + 1);
+        });
+        return Array.from(counts.entries())
+          .map(([locationCode, total]) => ({ locationCode, total }))
+          .sort((a, b) => b.total - a.total);
+      }
+
+      function renderLocations(byLocation) {
+        const totalLocations = byLocation.length;
+        locationsCount.textContent = `${totalLocations} cajones`;
+        if (totalLocations === 0) {
+          locationsEmpty.classList.remove("hidden");
+          locationsList.innerHTML = "";
+          showMoreBtn.classList.add("hidden");
+          return;
+        }
+
+        locationsEmpty.classList.add("hidden");
+        const max = Math.max(...byLocation.map((row) => row.total));
+        const visible = showAll ? byLocation : byLocation.slice(0, SHOW_LIMIT);
+        locationsList.innerHTML = visible
+          .map((row) => {
+            const pct = max ? Math.round((row.total / max) * 100) : 0;
+            return `
+              <div class="list-item">
+                <strong>${row.locationCode}</strong>
+                <div class="bar"><span style="width: ${pct}%"></span></div>
+                <small>${row.total} pedidos</small>
+              </div>
+            `;
+          })
+          .join("");
+
+        if (totalLocations > SHOW_LIMIT) {
+          showMoreBtn.classList.remove("hidden");
+          showMoreBtn.textContent = showAll ? "Mostrar menos" : "Mostrar todo";
+        } else {
+          showMoreBtn.classList.add("hidden");
+        }
+      }
+
+      async function loadMetrics() {
+        try {
+          const start = toStartOfDay(dateFrom.value);
+          const end = toEndOfDay(dateTo.value);
+          const data = await apiJson(`/api/orders/metrics/report?startDate=${start}&endDate=${end}`);
+          const summary = data.summary || {
+            totalManoeuvres: Number(data.total || 0),
+            pickingOrders: Array.isArray(data.items)
+              ? data.items.filter((row) => String(row.origin || "").toUpperCase() === "PICKING").length
+              : 0,
+          };
+          const byLocation = Array.isArray(data.byLocation)
+            ? data.byLocation
+            : buildByLocationFromItems(data.items || []);
+
+          currentSummary = summary;
+          currentByLocation = byLocation;
+          renderKpis(currentSummary);
+          renderLocations(currentByLocation);
+
+          const rangeText = `${formatDateLabel(new Date(start))} → ${formatDateLabel(new Date(end))}`;
+          rangeLabel.textContent = rangeText;
+          rangeDelta.textContent = `${summary.totalManoeuvres} maniobras`;
+          setStatus(true, "Métricas actualizadas.");
+        } catch (error) {
+          setStatus(false, error.message);
+        }
+      }
+
+      function setDefaultDates() {
+        const today = new Date();
+        const prior = new Date();
+        prior.setDate(today.getDate() - 7);
+        dateFrom.value = prior.toISOString().slice(0, 10);
+        dateTo.value = today.toISOString().slice(0, 10);
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        showAll = false;
+        loadMetrics();
+      });
+
+      showMoreBtn.addEventListener("click", () => {
+        showAll = !showAll;
+        renderLocations(currentByLocation);
+      });
+
+      toggleListBtn.addEventListener("click", () => {
+        const isHidden = locationsPanel.classList.toggle("hidden");
+        toggleListBtn.textContent = isHidden ? "Mostrar lista" : "Ocultar lista";
+      });
+
+      setDefaultDates();
+      loadMetrics();
+    </script>
+  </body>
+</html>

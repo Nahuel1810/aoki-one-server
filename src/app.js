@@ -36,7 +36,11 @@ function createApp(options = {}) {
   }
 
   if (options.enableStatic !== false) {
-    app.use(express.static(path.join(__dirname, "../public")));
+    const publicDir = path.join(__dirname, "../public");
+    app.use(express.static(publicDir));
+    app.get("/metricas", (req, res) => {
+      res.sendFile(path.join(publicDir, "metricas.html"));
+    });
   }
 
   const logger = options.logger || console;

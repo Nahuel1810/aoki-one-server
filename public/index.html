@@ -541,6 +541,35 @@
         gap: 6px;
       }
 
+      .order-top-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .order-origin {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .order-origin--manual {
+        background: #e6f1ff;
+        color: #1c4a7e;
+        border: 1px solid rgba(28, 74, 126, 0.2);
+      }
+
+      .order-origin--picking {
+        background: #eef7ea;
+        color: #2e6b2e;
+        border: 1px solid rgba(46, 107, 46, 0.2);
+      }
+
       .order-item .order-meta {
         display: flex;
         flex-wrap: wrap;
@@ -968,6 +997,26 @@
         return String(typeRaw || "").trim() || "—";
       }
 
+      function normalizeOrderOrigin(originRaw) {
+        if (originRaw === undefined || originRaw === null || String(originRaw).trim() === "") return null;
+        const origin = String(originRaw).trim().toUpperCase();
+        if (origin === "MANUAL" || origin === "PICKING") return origin;
+        return null;
+      }
+
+      function orderOriginLabel(origin) {
+        if (origin === "MANUAL") return "Manual";
+        if (origin === "PICKING") return "Picking";
+        return "—";
+      }
+
+      function orderOriginBadge(order) {
+        const origin = normalizeOrderOrigin(order.origin);
+        if (!origin) return "";
+        const cssClass = origin === "MANUAL" ? "order-origin--manual" : "order-origin--picking";
+        return `<span class="order-origin ${cssClass}">${asSafe(orderOriginLabel(origin))}</span>`;
+      }
+
       /** En cola: PICK muestra origen; PUT muestra destino de la devolución (igual criterio que el slot). */
       function orderQueueLocationLabel(order) {
         const t = String(order.type || "").trim().toUpperCase();
@@ -1268,7 +1317,10 @@
               <article class="order-item ${isActive ? "active" : ""}">
                 <div class="order-top">
                   <strong>${asSafe(orderTypeUiLabel(order.type))} | ${asSafe(orderQueueLocationLabel(order))}</strong>
-                  <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(orderStatusLabel(order.status))}</span>
+                  <div class="order-top-right">
+                    ${orderOriginBadge(order)}
+                    <span class="status-pill ${orderStatusClass(order.status)}">${asSafe(orderStatusLabel(order.status))}</span>
+                  </div>
                 </div>
                 <div class="order-meta">
                   <span>Paso: ${Number(order.currentStepIndex || 0) + 1} / ${Array.isArray(order.steps) ? order.steps.length : 0}</span>
@@ -1429,6 +1481,7 @@
         try {
           const payload = {
             type: "PICK",
+            origin: "MANUAL",
             locationCode: document.getElementById("pickLocationCode").value.trim().toUpperCase(),
           };
 
@@ -1465,6 +1518,7 @@
 
         const payload = {
           type: "PUT",
+          origin: "MANUAL",
           locationCode: key,
           targetLocation: String(origin).trim().toUpperCase(),
         };
@@ -1489,6 +1543,7 @@
         try {
           const payload = {
             type: "PUT",
+            origin: "MANUAL",
             locationCode: document.getElementById("putSourceSlot").value,
             targetLocation: document.getElementById("putTargetLocation").value.trim().toUpperCase(),
           };

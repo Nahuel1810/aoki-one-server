@@ -22,6 +22,32 @@ function createOrdersRoutes(services) {
     return value;
   }
 
+  function parseOrigin(rawOrigin) {
+    if (rawOrigin === undefined || rawOrigin === null || String(rawOrigin).trim() === "") {
+      return null;
+    }
+    const origin = String(rawOrigin).trim().toUpperCase();
+    if (!["MANUAL", "PICKING"].includes(origin)) {
+      throw new Error("origin invalido. Usar MANUAL o PICKING");
+    }
+    return origin;
+  }
+
+  function parseDateInput(value, label) {
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return null;
+    }
+    const raw = String(value).trim();
+    if (/^\d+$/.test(raw)) {
+      return Number(raw);
+    }
+    const parsed = Date.parse(raw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${label} invalido. Usar timestamp o ISO`);
+    }
+    return parsed;
+  }
+
   async function createOrderResponsePayload(orderInput) {
     const numericId = parseNumericOrderId(orderInput.id);
     const existingOrder = Number.isInteger(numericId)
@@ -103,7 +129,11 @@ function createOrdersRoutes(services) {
   router.post("/", async (req, res) => {
     try {
       const body = req.body || {};
-      const { order, created } = await createOrderResponsePayload(body);
+      const origin = parseOrigin(body.origin);
+      const { order, created } = await createOrderResponsePayload({
+        ...body,
+        origin: origin || undefined,
+      });
       res.status(created ? 202 : 200).json({ ok: true, data: order, created });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -113,9 +143,11 @@ function createOrdersRoutes(services) {
   router.post("/pick", async (req, res) => {
     try {
       const body = req.body || {};
+      const origin = parseOrigin(body.origin);
       const { order, created } = await createOrderResponsePayload({
         ...body,
         type: "PICK",
+        origin: origin || "PICKING",
       });
 
       res.status(created ? 202 : 200).json({ ok: true, data: order, created });
@@ -134,6 +166,26 @@ function createOrdersRoutes(services) {
       res.json({ ok: true, data: snapshot });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.get("/metrics/report", (req, res) => {
+    try {
+      if (!services.eventStore || typeof services.eventStore.getMetricsReport !== "function") {
+        res.status(501).json({ ok: false, error: "Reporte de métricas no disponible" });
+        return;
+      }
+
+      const startDate = parseDateInput(req.query.startDate, "startDate");
+      const endDate = parseDateInput(req.query.endDate, "endDate");
+      if (startDate !== null && endDate !== null && endDate < startDate) {
+        throw new Error("endDate debe ser mayor o igual a startDate");
+      }
+
+      const report = services.eventStore.getMetricsReport({ startDate, endDate });
+      res.json({ ok: true, data: report });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 
