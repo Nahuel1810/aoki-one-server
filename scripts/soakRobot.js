@@ -27,9 +27,9 @@
  *   SOAK_IDLE_MS        (60000)                  quieto tanto tiempo -> inyecta
  *   SOAK_POLL_MS        (3000)                   cada cuanto consulta estado
  *   SOAK_ESTANTERIA     (3X)                     prefijo de estanteria
- *   SOAK_MODULES        (03-10)                  rango de modulos de origen
- *   SOAK_LEVELS         (A-H)                    rango de niveles (tope duro: H)
- *   SOAK_POSITIONS      (1-3)                    rango de posiciones
+ *   SOAK_MODULES        (03-21)                  rango de modulos (tope duro: 01-21)
+ *   SOAK_LEVELS         (A-H)                    rango de niveles (tope duro: A-H)
+ *   SOAK_POSITIONS      (1-3)                    rango de posiciones (tope duro: 1-3)
  *   SOAK_EXCLUDE        ()                       ubicaciones a excluir (coma)
  *   SOAK_ORDER_TIMEOUT_MS (600000)               techo de espera por orden
  */
@@ -37,9 +37,16 @@
 const { parseLocationCode } = require("../src/core/orchestrator/locationTranslator");
 const { resolvePickSlotsConfig } = require("../src/config/pickSlots");
 
-// El pedido fue explicito: por ahora no subir mas alto que el nivel I.
-// El tope se aplica aunque SOAK_LEVELS pida mas.
+// Limites fisicos de la estanteria. Se aplican SIEMPRE, aunque la config pida
+// mas: la ubicacion mas alta/lejana posible es 3X21AH3.
+//  - Nivel: por ahora no subir mas alto que el I (pedido explicito).
+//  - Modulo: la estanteria llega hasta el 21; mas alla no existe.
+//  - Posicion: 3 por ubicacion.
 const MAX_LEVEL_LETTER = "H";
+const MIN_MODULE = 1;
+const MAX_MODULE = 21;
+const MIN_POSITION = 1;
+const MAX_POSITION = 3;
 
 const config = {
   baseUrl: (process.env.SOAK_BASE_URL || "http://127.0.0.1:3000").replace(/\/$/, ""),
@@ -47,7 +54,7 @@ const config = {
   idleMs: Number(process.env.SOAK_IDLE_MS || 60000),
   pollMs: Number(process.env.SOAK_POLL_MS || 3000),
   estanteria: String(process.env.SOAK_ESTANTERIA || "3X").toUpperCase(),
-  modules: process.env.SOAK_MODULES || "03-10",
+  modules: process.env.SOAK_MODULES || "03-21",
   levels: process.env.SOAK_LEVELS || "A-H",
   positions: process.env.SOAK_POSITIONS || "1-3",
   exclude: String(process.env.SOAK_EXCLUDE || "")
@@ -127,23 +134,51 @@ function parseLetterRange(spec, label) {
   return letters;
 }
 
+/**
+ * Recorta un rango pedido por config a los limites fisicos de la estanteria.
+ * Avisa de lo descartado y falla si no queda nada utilizable.
+ */
+function clampToLimits(values, { min, max, label, what, format = (value) => value }) {
+  const kept = values.filter((value) => value >= min && value <= max);
+  const dropped = values.filter((value) => value < min || value > max);
+
+  if (dropped.length > 0) {
+    log("warn", `${what} fuera de la estanteria descartados`, {
+      descartados: dropped.map(format),
+      limite: `${format(min)}-${format(max)}`,
+    });
+  }
+
+  if (kept.length === 0) {
+    throw new Error(
+      `${label} no dejo ningun valor valido. Limite fisico: ${format(min)}-${format(max)}`
+    );
+  }
+
+  return kept;
+}
+
 // ── Pool de ubicaciones ───────────────────────────────────────────
 
 function buildLocationPool() {
-  const modules = parseNumericRange(config.modules, "SOAK_MODULES");
-  const positions = parseNumericRange(config.positions, "SOAK_POSITIONS");
-  const requestedLevels = parseLetterRange(config.levels, "SOAK_LEVELS");
-
-  const cap = MAX_LEVEL_LETTER.charCodeAt(0);
-  const levels = requestedLevels.filter((letter) => letter.charCodeAt(0) <= cap);
-  const dropped = requestedLevels.filter((letter) => letter.charCodeAt(0) > cap);
-  if (dropped.length > 0) {
-    log("warn", `niveles por encima del tope ${MAX_LEVEL_LETTER} descartados`, { dropped });
-  }
-
-  if (levels.length === 0) {
-    throw new Error(`SOAK_LEVELS no dejo ningun nivel valido (tope ${MAX_LEVEL_LETTER})`);
-  }
+  const modules = clampToLimits(
+    parseNumericRange(config.modules, "SOAK_MODULES"),
+    { min: MIN_MODULE, max: MAX_MODULE, label: "SOAK_MODULES", what: "modulos" }
+  );
+  const positions = clampToLimits(
+    parseNumericRange(config.positions, "SOAK_POSITIONS"),
+    { min: MIN_POSITION, max: MAX_POSITION, label: "SOAK_POSITIONS", what: "posiciones" }
+  );
+  const levels = clampToLimits(
+    parseLetterRange(config.levels, "SOAK_LEVELS").map((letter) => letter.charCodeAt(0)),
+    {
+      min: "A".charCodeAt(0),
+      max: MAX_LEVEL_LETTER.charCodeAt(0),
+      label: "SOAK_LEVELS",
+      what: "niveles",
+      format: (code) => String.fromCharCode(code),
+    }
+  ).map((code) => String.fromCharCode(code));
 
   // Los slots de pickeo son destino, nunca origen.
   const pickSlots = new Set(resolvePickSlotsConfig({}));
