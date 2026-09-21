@@ -82,6 +82,7 @@ class SqliteEventStore {
 
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const pickingWhere = where ? `${where} AND origin = 'PICKING'` : "WHERE origin = 'PICKING'";
+    const pickWhere = where ? `${where} AND type = 'PICK'` : "WHERE type = 'PICK'";
     const totalRow = this.db
       .prepare(`SELECT COUNT(*) as total FROM order_metrics ${where}`)
       .get(params);
@@ -92,7 +93,7 @@ class SqliteEventStore {
       .prepare(
         `SELECT location_code as locationCode, COUNT(*) as total
          FROM order_metrics
-         ${where}
+         ${pickWhere}
          GROUP BY location_code
          ORDER BY total DESC`
       )
