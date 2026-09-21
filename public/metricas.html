@@ -438,16 +438,30 @@
         return new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" }).format(value);
       }
 
+      function parseLocalDate(value) {
+        const [year, month, day] = String(value || "")
+          .split("-")
+          .map(Number);
+        if (!year || !month || !day) return new Date(NaN);
+        return new Date(year, month - 1, day);
+      }
+
       function toStartOfDay(value) {
-        const date = new Date(value);
+        const date = parseLocalDate(value);
         date.setHours(0, 0, 0, 0);
         return date.getTime();
       }
 
       function toEndOfDay(value) {
-        const date = new Date(value);
+        const date = parseLocalDate(value);
         date.setHours(23, 59, 59, 999);
         return date.getTime();
+      }
+
+      function toInputValue(date) {
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${date.getFullYear()}-${month}-${day}`;
       }
 
       function setStatus(ok, message) {
@@ -472,6 +486,7 @@
       function buildByLocationFromItems(items) {
         const counts = new Map();
         (items || []).forEach((row) => {
+          if (String(row.type || "").toUpperCase() !== "PICK") return;
           const code = String(row.locationCode || "").trim();
           if (!code) return;
           counts.set(code, (counts.get(code) || 0) + 1);
@@ -548,8 +563,8 @@
         const today = new Date();
         const prior = new Date();
         prior.setDate(today.getDate() - 7);
-        dateFrom.value = prior.toISOString().slice(0, 10);
-        dateTo.value = today.toISOString().slice(0, 10);
+        dateFrom.value = toInputValue(prior);
+        dateTo.value = toInputValue(today);
       }
 
       form.addEventListener("submit", (event) => {

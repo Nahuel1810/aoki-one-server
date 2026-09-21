@@ -742,7 +742,7 @@ class OrchestratorService {
       orderId: order.id,
       origin: order.origin,
       type: order.type,
-      locationCode: order.slotLocationCode || order.locationCode,
+      locationCode: order.locationCode || order.slotLocationCode,
       waitingMs,
       durationMs,
       status: statusOverride || order.status,
