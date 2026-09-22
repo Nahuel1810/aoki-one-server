@@ -38,7 +38,7 @@ function DeviceRow({ device, onConfigure }: { device: Device; onConfigure: () =>
       </span>
 
       <span className={cn('text-sm font-medium', connected ? 'text-ready-ink' : 'text-fault-ink')}>
-        {connected ? 'Conectado' : 'Sin conexion'}
+        {connected ? 'Conectado' : 'Sin conexión'}
       </span>
 
       {/*
@@ -46,7 +46,7 @@ function DeviceRow({ device, onConfigure }: { device: Device; onConfigure: () =>
        * La IP queda como dato secundario: se mira solo al configurar.
        */}
       <span className="text-sm text-ink-muted">
-        Ultima respuesta {timeAgo(device.lastSeen)}
+        Última respuesta {timeAgo(device.lastSeen)}
         {seen && <span className="ml-1 text-ink-subtle">({seen})</span>}
       </span>
 
@@ -167,7 +167,7 @@ export function DispositivosRoute() {
           }}
         />
       ) : robotList.length === 0 ? (
-        <EmptyPanel label="No hay robots" hint="Agrega un equipo para que aparezca su robot." />
+        <EmptyPanel label="No hay robots" hint="Agregá un equipo para que aparezca su robot." />
       ) : (
         <div className="grid gap-3">
           {robotList.map((robot) => (

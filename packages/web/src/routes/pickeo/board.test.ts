@@ -53,7 +53,7 @@ describe('buildBoards', () => {
     expect(boards.map((board) => board.robotId)).toEqual(['1', '2'])
   })
 
-  it('no asume ninguna ubicacion: sin slots no hay tablero', () => {
+  it('no asume ninguna ubicación: sin slots no hay tablero', () => {
     expect(buildBoards([])).toEqual([])
   })
 
@@ -69,7 +69,7 @@ describe('buildBoards', () => {
 })
 
 describe('slotDisplay', () => {
-  it('un slot ocupado muestra el origen del cajon que tiene encima', () => {
+  it('un slot ocupado muestra el origen del cajón que tiene encima', () => {
     const slot = makeSlot({
       status: 'OCUPADO',
       currentBox: { id: 'box-1', sourceLocationCode: '3X07AB2' },
@@ -82,14 +82,14 @@ describe('slotDisplay', () => {
     expect(slotDisplay(makeSlot(), new Map())).toEqual({ code: null })
   })
 
-  it('en camino muestra el cajon que viene', () => {
+  it('en camino muestra el cajón que viene', () => {
     const order = makeOrder({ id: 'o1', type: 'PICK', locationCode: '3X09AD1' })
     const slot = makeSlot({ status: 'BUSCANDO', reservedByOrderId: 'o1' })
 
     expect(slotDisplay(slot, indexOrders([order]))).toEqual({ code: '3X09AD1' })
   })
 
-  it('guardando muestra a donde va el cajon, no el slot', () => {
+  it('guardando muestra a donde va el cajón, no el slot', () => {
     const order = makeOrder({
       id: 'o2',
       type: 'PUT',
@@ -101,7 +101,7 @@ describe('slotDisplay', () => {
     expect(slotDisplay(slot, indexOrders([order]))).toEqual({ code: '3X09AD1' })
   })
 
-  it('no rompe si la orden que reservo el slot ya no esta', () => {
+  it('no rompe si la orden que reservo el slot ya no está', () => {
     const slot = makeSlot({ status: 'BUSCANDO', reservedByOrderId: 'desaparecida' })
 
     expect(slotDisplay(slot, new Map())).toEqual({ code: null })

@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { errorMessage } from '@/api/client'
+import { useCreatePutOrder } from '@/api/mutations'
 import { useOrders, useSlots } from '@/api/queries'
 import type { Slot } from '@/api/schemas'
 import { ErrorPanel, LoadingPanel } from '@/components/feedback/LoadingPanel'
@@ -16,18 +17,37 @@ import { SlotBoard } from './SlotBoard'
  * Vista principal.
  *
  * El tablero es la tarea: se lleva el ancho completo y lo que el operario hace
- * es tocar un cajon. Los pedidos van abajo y solo ocupan lugar cuando hay algo
- * en curso. Pedir o guardar a mano es una accion de vez en cuando, asi que el
- * boton es secundario.
+ * es tocar un cajón. Los pedidos van abajo y solo ocupan lugar cuando hay algo
+ * en curso. Pedir o guardar a mano es una acción de vez en cuando, así que el
+ * botón es secundario.
  */
 export function PickeoRoute() {
   const slots = useSlots()
   const orders = useOrders()
-  const [returning, setReturning] = useState<Slot | null>(null)
+  const createPut = useCreatePutOrder()
+  const [askTarget, setAskTarget] = useState<Slot | null>(null)
 
   const isFirstLoad = slots.isPending || orders.isPending
   const failedWithoutData = slots.isError && slots.data === undefined
   const pending = operationalOrders(orders.data ?? [])
+
+  /**
+   * Tocar un cajón lo manda a guardar directo: el pedido aparece abajo al
+   * instante y desde ahí se puede cancelar, así que un toque de más se
+   * deshace sin costo. Solo se pregunta cuando el sistema no sabe de dónde
+   * salió el cajón, porque ahí falta un dato que nadie más tiene.
+   */
+  function handleReturn(slot: Slot) {
+    const registered = slot.currentBox?.sourceLocationCode
+
+    if (registered) {
+      // El destino viaja explícito: es la ubicación de la que salió el cajón.
+      createPut.mutate({ slotLocationCode: slot.locationCode, targetLocation: registered })
+      return
+    }
+
+    setAskTarget(slot)
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -35,15 +55,22 @@ export function PickeoRoute() {
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-xl font-extrabold tracking-tight">Zona de pickeo</h1>
 
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="secondary" size="compact">
-                <Plus aria-hidden />
-                Pedir o guardar
-              </Button>
-            </DialogTrigger>
-            <ManualActionsSheet slots={slots.data ?? []} />
-          </Dialog>
+          <div className="flex items-center gap-3">
+            {createPut.isError && (
+              <p role="alert" className="text-sm font-semibold text-fault-ink">
+                {errorMessage(createPut.error)}
+              </p>
+            )}
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="secondary" size="compact">
+                  <Plus aria-hidden />
+                  Pedir o guardar
+                </Button>
+              </DialogTrigger>
+              <ManualActionsSheet slots={slots.data ?? []} />
+            </Dialog>
+          </div>
         </div>
 
         {isFirstLoad ? (
@@ -56,7 +83,7 @@ export function PickeoRoute() {
             }}
           />
         ) : (
-          <SlotBoard slots={slots.data} orders={orders.data ?? []} onReturn={setReturning} />
+          <SlotBoard slots={slots.data} orders={orders.data ?? []} onReturn={handleReturn} />
         )}
       </section>
 
@@ -79,9 +106,9 @@ export function PickeoRoute() {
       )}
 
       <ReturnBoxDialog
-        slot={returning}
+        slot={askTarget}
         onClose={() => {
-          setReturning(null)
+          setAskTarget(null)
         }}
       />
     </div>

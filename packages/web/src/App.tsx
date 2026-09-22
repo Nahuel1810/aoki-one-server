@@ -7,7 +7,7 @@ import { LoadingPanel } from '@/components/feedback/LoadingPanel'
 import { PickeoRoute } from '@/routes/pickeo/PickeoRoute'
 import { DispositivosRoute } from '@/routes/dispositivos/DispositivosRoute'
 
-// Metricas va en su propio chunk: no se abre en la operacion diaria.
+// Métricas va en su propio chunk: no se abre en la operacion diaria.
 const MetricasRoute = lazy(async () => {
   const mod = await import('@/routes/metricas/MetricasRoute')
   return { default: mod.MetricasRoute }
@@ -23,7 +23,7 @@ const router = createBrowserRouter([
       {
         path: 'metricas',
         element: (
-          <Suspense fallback={<LoadingPanel label="Cargando metricas" />}>
+          <Suspense fallback={<LoadingPanel label="Cargando métricas" />}>
             <MetricasRoute />
           </Suspense>
         ),

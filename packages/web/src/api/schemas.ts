@@ -14,7 +14,7 @@ import {
  *
  * Los campos que el backend puede omitir llevan `.default(null)` en vez de
  * `.optional()`, asi el consumidor siempre recibe la propiedad presente y no
- * hay que distinguir "ausente" de "vacio".
+ * hay que distinguir "ausente" de "vacío".
  */
 
 export const sideSchema = z.enum(['LEFT', 'RIGHT'])
@@ -76,7 +76,7 @@ export const deviceSchema = z.looseObject({
   port: z.number().nullable().default(null),
   status: z.enum(['CONNECTED', 'DISCONNECTED']),
   lastCommand: z.unknown().nullable().default(null),
-  /** Ultima vez que el PLC contesto. Es el dato de diagnostico que importa. */
+  /** Última vez que el PLC contesto. Es el dato de diagnostico que importa. */
   lastSeen: z.number().nullable().default(null),
   updatedAt: z.number().nullable().default(null),
 })
@@ -111,7 +111,7 @@ export const metricsReportSchema = z.looseObject({
       totalManoeuvres: z.number().default(0),
       manoeuvresPerOrder: z.number().default(0),
       failedOrders: z.number().default(0),
-      /** Desde que entra el pedido hasta que el cajon esta en el lugar. */
+      /** Desde que entra el pedido hasta que el cajón esta en el lugar. */
       avgTimeToSlotMs: z.number().default(0),
       maxTimeToSlotMs: z.number().default(0),
       /** Cuanto de esa espera fue turno y no maniobra. */

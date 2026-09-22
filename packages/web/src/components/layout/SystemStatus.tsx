@@ -76,7 +76,7 @@ export function SystemStatus() {
         <DialogContent>
           <DialogHeader
             title="Reanudar el robot"
-            description="Va a retomar los pedidos pendientes y empezar a moverse. Verifique que la zona este despejada."
+            description="Va a retomar los pedidos pendientes y empezar a moverse. Verificá que la zona esté despejada."
           />
           <DialogFooter>
             <DialogClose asChild>

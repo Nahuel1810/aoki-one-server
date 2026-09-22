@@ -8,7 +8,7 @@ export const SelectValue = SelectPrimitive.Value
 
 /**
  * Se usa Radix en lugar del `<select>` nativo porque las opciones necesitan
- * dos lineas (ubicacion + cajon) y porque los items nativos no llegan al
+ * dos lineas (ubicación + cajón) y porque los items nativos no llegan al
  * objetivo tactil de 56px de forma consistente entre navegadores.
  */
 export function SelectTrigger({

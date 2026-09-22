@@ -140,7 +140,7 @@ export function MetricasRoute() {
   return (
     <div className="grid content-start gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-xl font-extrabold tracking-tight">Metricas</h1>
+        <h1 className="text-xl font-extrabold tracking-tight">Métricas</h1>
         <p className="text-sm text-ink-muted">{formatRange(range)}</p>
       </div>
 
@@ -196,7 +196,7 @@ export function MetricasRoute() {
       </section>
 
       {report.isPending ? (
-        <LoadingPanel label="Cargando metricas" />
+        <LoadingPanel label="Cargando métricas" />
       ) : report.isError && report.data === undefined ? (
         <ErrorPanel
           message={errorMessage(report.error)}
@@ -219,9 +219,9 @@ export function MetricasRoute() {
             <Kpi
               label="Espera promedio"
               value={formatDuration(summary?.avgTimeToSlotMs ?? 0)}
-              note="desde el pedido hasta el cajon en el lugar"
+              note="desde el pedido hasta el cajón en el lugar"
             />
-            <Kpi label="Espera mas larga" value={formatDuration(summary?.maxTimeToSlotMs ?? 0)} />
+            <Kpi label="Espera más larga" value={formatDuration(summary?.maxTimeToSlotMs ?? 0)} />
             <Kpi
               label="Pedidos con error"
               value={(summary?.failedOrders ?? 0).toLocaleString('es-AR')}
@@ -231,7 +231,7 @@ export function MetricasRoute() {
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
             <section className="grid content-start gap-2.5 rounded-panel border border-border bg-surface p-4 shadow-card">
-              <h2 className="text-base font-bold">Cajones mas pedidos</h2>
+              <h2 className="text-base font-bold">Cajones más pedidos</h2>
               <LocationRanking report={report.data} />
             </section>
 
@@ -245,21 +245,6 @@ export function MetricasRoute() {
                 <Stat
                   label="Manuales"
                   value={(summary?.manualOrders ?? 0).toLocaleString('es-AR')}
-                />
-                <Stat
-                  label="Movimientos del robot"
-                  value={(summary?.totalManoeuvres ?? 0).toLocaleString('es-AR')}
-                />
-                <Stat
-                  label="Movimientos por pedido"
-                  value={(summary?.manoeuvresPerOrder ?? 0).toLocaleString('es-AR', {
-                    maximumFractionDigits: 1,
-                  })}
-                />
-                {/* Si la espera es casi toda turno, el cuello no es el robot. */}
-                <Stat
-                  label="De la espera, en turno"
-                  value={formatDuration(summary?.avgQueueMs ?? 0)}
                 />
               </dl>
             </section>

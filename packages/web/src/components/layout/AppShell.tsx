@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn'
 const NAV = [
   { to: '/', label: 'Pickeo', icon: LayoutGrid, end: true },
   { to: '/dispositivos', label: 'Equipos', icon: RouterIcon, end: false },
-  { to: '/metricas', label: 'Metricas', icon: BarChart3, end: false },
+  { to: '/metricas', label: 'Métricas', icon: BarChart3, end: false },
 ] as const
 
 function NavItem({

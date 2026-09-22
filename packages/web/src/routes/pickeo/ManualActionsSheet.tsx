@@ -66,9 +66,9 @@ function Feedback({ error, ok }: { error: unknown; ok: string | null }) {
   return null
 }
 
-/** Un cajon se identifica por su ubicacion de origen. */
+/** Un cajón se identifica por su ubicación de origen. */
 function slotOptionLabel(slot: Slot): string {
-  return slot.currentBox?.sourceLocationCode ?? 'Cajon sin identificar'
+  return slot.currentBox?.sourceLocationCode ?? 'Cajón sin identificar'
 }
 
 function PickForm() {
@@ -90,7 +90,7 @@ function PickForm() {
       }}
     >
       <Action
-        title="Pedir un cajon"
+        title="Pedir un cajón"
         action={
           <Button type="submit" disabled={createPick.isPending || code.trim().length === 0}>
             {createPick.isPending ? 'Enviando…' : 'Pedir'}
@@ -99,12 +99,12 @@ function PickForm() {
         feedback={
           <Feedback
             error={createPick.error}
-            ok={createPick.isSuccess ? 'El robot ya lo esta buscando.' : null}
+            ok={createPick.isSuccess ? 'El robot ya lo está buscando.' : null}
           />
         }
       >
         <Label htmlFor="pick-code" className="sr-only">
-          Ubicacion del cajon
+          Ubicación del cajón
         </Label>
         <Input
           id="pick-code"
@@ -130,8 +130,8 @@ function ManualPutForm({ slots }: { slots: Slot[] }) {
 
   /*
    * Solo se ofrecen cajones reales. El backend tambien acepta guardar desde un
-   * lugar vacio (un cajon que alguien apoyo sin que el sistema lo sepa), pero
-   * listar once opciones identicas que dicen "Lugar vacio" no deja elegir
+   * lugar vacío (un cajón que alguien apoyo sin que el sistema lo sepa), pero
+   * listar once opciones identicas que dicen "Lugar vacío" no deja elegir
    * ninguna: para ese caso esta el tablero.
    */
   const candidates = slots.filter((slot) => slot.status === 'OCUPADO')
@@ -149,7 +149,7 @@ function ManualPutForm({ slots }: { slots: Slot[] }) {
         createPut.mutate(
           {
             slotLocationCode: selected.locationCode,
-            ...(needsTarget ? { targetLocation: target } : {}),
+            targetLocation: needsTarget ? target : (knownTarget ?? ''),
           },
           {
             onSuccess: () => {
@@ -161,7 +161,7 @@ function ManualPutForm({ slots }: { slots: Slot[] }) {
       }}
     >
       <Action
-        title="Guardar un cajon"
+        title="Guardar un cajón"
         action={
           <Button
             type="submit"
@@ -181,7 +181,7 @@ function ManualPutForm({ slots }: { slots: Slot[] }) {
             )}
             {needsTarget && (
               <div className="grid gap-1.5">
-                <Label htmlFor="put-target">A donde va</Label>
+                <Label htmlFor="put-target">A dónde va</Label>
                 <Input
                   id="put-target"
                   required
@@ -198,13 +198,13 @@ function ManualPutForm({ slots }: { slots: Slot[] }) {
             )}
             <Feedback
               error={createPut.error}
-              ok={createPut.isSuccess ? 'El robot ya lo esta guardando.' : null}
+              ok={createPut.isSuccess ? 'El robot ya lo está guardando.' : null}
             />
           </>
         }
       >
         <Label htmlFor="manual-put-slot" className="sr-only">
-          Cajon a guardar
+          Cajón a guardar
         </Label>
         <Select value={slotCode} onValueChange={setSlotCode} disabled={candidates.length === 0}>
           <SelectTrigger id="manual-put-slot">
@@ -253,7 +253,7 @@ function ReleaseSlotForm({ slots }: { slots: Slot[] }) {
             <DialogContent>
               <DialogHeader
                 title={`Vaciar ${selected ? slotOptionLabel(selected) : 'el lugar'}`}
-                description="El robot no se mueve. Si el cajon sigue apoyado ahi, el sistema deja de saberlo."
+                description="El robot no se mueve. Si el cajón sigue apoyado ahí, el sistema deja de saberlo."
               />
               <DialogFooter>
                 <DialogClose asChild>
@@ -279,7 +279,7 @@ function ReleaseSlotForm({ slots }: { slots: Slot[] }) {
       }
     >
       <Label htmlFor="release-slot" className="sr-only">
-        Cajon que ya no esta
+        Cajón que ya no está
       </Label>
       <Select value={slotCode} onValueChange={setSlotCode} disabled={occupied.length === 0}>
         <SelectTrigger id="release-slot">

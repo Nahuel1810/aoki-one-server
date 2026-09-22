@@ -18,38 +18,22 @@ test.describe('Zona de pickeo', () => {
     await expect(page.getByText('3X01AA1')).toHaveCount(0)
   })
 
-  test('devolver un cajon exige confirmacion y manda el pedido correcto', async ({ page }) => {
+  test('tocar un cajon lo manda a guardar sin pasos intermedios', async ({ page }) => {
     const recorded = await mockApi(page)
     await page.goto('/')
 
     await page.getByRole('button', { name: /guardar 3X07AB2/i }).click()
 
-    // Un toque abre el dialogo. No encola nada todavia.
-    await expect(page.getByRole('dialog')).toBeVisible()
-    expect(recorded.filter((call) => call.url === '/api/orders')).toHaveLength(0)
-
-    // El destino se ve antes de confirmar.
-    await expect(page.getByRole('dialog').getByText('3X07AB2')).toBeVisible()
-
-    await page.getByRole('button', { name: 'Guardar cajon' }).click()
-
+    // Sin dialogo de por medio: el pedido sale y queda cancelable en la lista.
     await expect.poll(() => recorded.filter((c) => c.url === '/api/orders')).toHaveLength(1)
+    // El destino viaja explicito: es la ubicacion de la que salio el cajon.
     expect(recorded.find((c) => c.url === '/api/orders')?.body).toEqual({
       type: 'PUT',
       origin: 'MANUAL',
       locationCode: '3X01AA1',
+      targetLocation: '3X07AB2',
     })
-  })
-
-  test('cancelar el dialogo no encola nada', async ({ page }) => {
-    const recorded = await mockApi(page)
-    await page.goto('/')
-
-    await page.getByRole('button', { name: /guardar 3X07AB2/i }).click()
-    await page.getByRole('button', { name: 'Cancelar' }).click()
-
     await expect(page.getByRole('dialog')).toBeHidden()
-    expect(recorded.filter((call) => call.url === '/api/orders')).toHaveLength(0)
   })
 
   test('un slot libre no se puede tocar', async ({ page }) => {
@@ -72,13 +56,32 @@ test.describe('Zona de pickeo', () => {
       .toHaveLength(1)
   })
 
-  test('las ordenes sanas no ofrecen cancelar', async ({ page }) => {
+  test('todo pedido se puede cancelar; reintentar solo el que fallo', async ({ page }) => {
     await mockApi(page)
     await page.goto('/')
 
-    // Solo la orden en ERROR expone acciones: una sola pareja de botones.
+    // Dos pedidos en curso, los dos cancelables.
+    await expect(page.getByRole('button', { name: 'Cancelar' })).toHaveCount(2)
+    // Reintentar solo tiene sentido en el que fallo.
     await expect(page.getByRole('button', { name: 'Reintentar' })).toHaveCount(1)
-    await expect(page.getByRole('button', { name: 'Cancelar' })).toHaveCount(1)
+  })
+
+  test('nunca se muestra la ubicacion de un slot de pickeo', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+
+    // El PUT en error sale del slot 3X01AA1: ese codigo es interno y no puede
+    // aparecer en pantalla, ni en el tablero ni en la lista de pedidos.
+    await expect(page.getByText('3X01AA1')).toHaveCount(0)
+    await expect(page.getByText('3X02AE1')).toHaveCount(0)
+  })
+
+  test('se distingue un pedido de picking de uno manual', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+
+    await expect(page.getByText('Picking', { exact: true })).toBeVisible()
+    await expect(page.getByText('Manual', { exact: true })).toBeVisible()
   })
 
   test('los objetivos de toque llegan al minimo de la tablet', async ({ page }) => {
@@ -120,7 +123,7 @@ test.describe('Todo entra en pantalla', () => {
   for (const [label, link, marker] of [
     ['pickeo', 'Pickeo', '3X07AB2'],
     ['equipos', 'Equipos', 'Agregar equipo'],
-    ['metricas', 'Metricas', 'Cajones mas pedidos'],
+    ['metricas', 'Métricas', 'Cajones más pedidos'],
   ] as const) {
     test(`la vista de ${label} entra sin scroll`, async ({ page }) => {
       await mockApi(page)
@@ -153,8 +156,8 @@ test.describe('Navegacion', () => {
     await page.getByRole('link', { name: 'Equipos' }).click()
     await expect(page.getByRole('heading', { name: 'Equipos', level: 1 })).toBeVisible()
 
-    await page.getByRole('link', { name: 'Metricas' }).click()
-    await expect(page.getByRole('heading', { name: 'Metricas', level: 1 })).toBeVisible()
+    await page.getByRole('link', { name: 'Métricas' }).click()
+    await expect(page.getByRole('heading', { name: 'Métricas', level: 1 })).toBeVisible()
 
     await page.getByRole('link', { name: 'Pickeo' }).click()
     await expect(page.getByRole('heading', { name: 'Zona de pickeo' })).toBeVisible()
@@ -168,7 +171,7 @@ test.describe('Navegacion', () => {
     await page.route(isApiRequest, (route) => route.abort('failed'))
 
     // El aviso es persistente y esta en el header, no al pie de una columna.
-    await expect(page.getByText('Sin conexion con el servidor')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText('Sin conexión con el servidor')).toBeVisible({ timeout: 30_000 })
     // El ultimo dato bueno sigue en pantalla: vaciar el tablero seria peor.
     await expect(page.getByText('3X07AB2')).toBeVisible()
   })

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { operationalOrders, orderLocationLabel } from './orders'
+import { operationalOrders, orderBoxLocation } from './orders'
 import { makeOrder } from '@/test/factories'
 
 describe('operationalOrders', () => {
-  it('deja fuera lo que ya no esta en juego', () => {
+  it('deja fuera lo que ya no está en juego', () => {
     const orders = [
       makeOrder({ id: '1', status: 'DONE' }),
       makeOrder({ id: '2', status: 'PENDING' }),
@@ -26,9 +26,9 @@ describe('operationalOrders', () => {
   })
 })
 
-describe('orderLocationLabel', () => {
+describe('orderBoxLocation', () => {
   it('un PICK se identifica por su origen', () => {
-    expect(orderLocationLabel(makeOrder({ type: 'PICK', locationCode: '3X09AD1' }))).toBe('3X09AD1')
+    expect(orderBoxLocation(makeOrder({ type: 'PICK', locationCode: '3X09AD1' }))).toBe('3X09AD1')
   })
 
   it('un PUT se identifica por su destino, no por el slot del que sale', () => {
@@ -38,10 +38,12 @@ describe('orderLocationLabel', () => {
       targetLocation: '3X09AD1',
     })
 
-    expect(orderLocationLabel(order)).toBe('3X09AD1')
+    expect(orderBoxLocation(order)).toBe('3X09AD1')
   })
 
-  it('un PUT sin destino cae al codigo que tenga', () => {
-    expect(orderLocationLabel(makeOrder({ type: 'PUT', locationCode: '3X01AA1' }))).toBe('3X01AA1')
+  it('un PUT sin destino no muestra nada: el locationCode es el slot interno', () => {
+    // 3X01AA1 es un slot de pickeo. Caer a ese codigo filtraba a la pantalla
+    // una ubicacion que en el deposito nadie conoce ni necesita.
+    expect(orderBoxLocation(makeOrder({ type: 'PUT', locationCode: '3X01AA1' }))).toBeNull()
   })
 })

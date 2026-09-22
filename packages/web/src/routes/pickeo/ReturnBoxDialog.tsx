@@ -16,49 +16,31 @@ import { Field, Input } from '@/components/ui/field'
  * El formulario se monta por slot y se desmonta al cerrar: el estado se
  * reinicia solo, sin un efecto que lo limpie a mano.
  */
-function ReturnBoxForm({ slot, onDone }: { slot: Slot; onDone: () => void }) {
+function AskTargetForm({ slot, onDone }: { slot: Slot; onDone: () => void }) {
   const createPut = useCreatePutOrder()
   const [target, setTarget] = useState('')
 
-  // El sistema sabe de donde salio el cajon; solo hace falta preguntarlo
-  // cuando no lo tiene registrado (RF12).
-  const knownTarget = slot.currentBox?.sourceLocationCode ?? null
-  const needsTarget = knownTarget === null
-  const box = slot.currentBox?.sourceLocationCode
-  const canConfirm = !createPut.isPending && (!needsTarget || target.trim().length > 0)
-
   return (
     <>
-      <div className="mt-5 grid gap-4">
-        {/*
-         * El cajon se identifica por su ubicacion de origen, que es a donde
-         * vuelve: mostrar "origen -> destino" seria el mismo codigo dos veces.
-         */}
-        <div className="grid justify-items-center gap-1 rounded-control border border-border bg-surface-sunken p-5">
-          <span className="font-code text-3xl font-extrabold">{box ?? 'Sin identificar'}</span>
-          {knownTarget && <span className="text-sm text-ink-muted">Vuelve a su lugar</span>}
-        </div>
-
-        {needsTarget && (
-          <Field label="A donde va">
-            {(props) => (
-              <Input
-                {...props}
-                value={target}
-                onChange={(event) => {
-                  setTarget(event.target.value.toUpperCase())
-                }}
-                placeholder="3X04AA1"
-                autoComplete="off"
-                autoCapitalize="characters"
-                spellCheck={false}
-              />
-            )}
-          </Field>
-        )}
+      <div className="mt-5">
+        <Field label="Ubicación del cajón">
+          {(props) => (
+            <Input
+              {...props}
+              value={target}
+              onChange={(event) => {
+                setTarget(event.target.value.toUpperCase())
+              }}
+              placeholder="3X04AA1"
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+            />
+          )}
+        </Field>
 
         {createPut.isError && (
-          <p role="alert" className="text-sm font-semibold text-fault-ink">
+          <p role="alert" className="mt-3 text-sm font-semibold text-fault-ink">
             {errorMessage(createPut.error)}
           </p>
         )}
@@ -69,21 +51,15 @@ function ReturnBoxForm({ slot, onDone }: { slot: Slot; onDone: () => void }) {
           <Button variant="secondary">Cancelar</Button>
         </DialogClose>
         <Button
-          variant="danger"
-          disabled={!canConfirm}
+          disabled={createPut.isPending || target.trim().length === 0}
           onClick={() => {
             createPut.mutate(
-              {
-                slotLocationCode: slot.locationCode,
-                // Si el sistema sabe de donde salio el cajon, el destino lo
-                // resuelve el backend: mandarlo desde aca seria pisarlo (RF12).
-                ...(needsTarget ? { targetLocation: target } : {}),
-              },
+              { slotLocationCode: slot.locationCode, targetLocation: target },
               { onSuccess: onDone },
             )
           }}
         >
-          {createPut.isPending ? 'Enviando…' : 'Guardar cajon'}
+          {createPut.isPending ? 'Enviando…' : 'Guardar cajón'}
         </Button>
       </DialogFooter>
     </>
@@ -91,10 +67,11 @@ function ReturnBoxForm({ slot, onDone }: { slot: Slot; onDone: () => void }) {
 }
 
 /**
- * Confirmacion antes de guardar un cajon (RF06).
+ * Solo aparece cuando el sistema no sabe de dónde salió el cajón.
  *
- * En el front anterior un toque en cualquier parte del slot lo mandaba directo:
- * en una tablet, con la mano apoyada, eso mueve el carro por accidente.
+ * El caso normal no pasa por acá: tocar un cajón lo manda a guardar directo y
+ * el pedido queda cancelable desde la lista. Acá se pregunta porque falta un
+ * dato que el sistema no tiene de ninguna otra forma.
  */
 export function ReturnBoxDialog({ slot, onClose }: { slot: Slot | null; onClose: () => void }) {
   return (
@@ -106,10 +83,10 @@ export function ReturnBoxDialog({ slot, onClose }: { slot: Slot | null; onClose:
     >
       <DialogContent>
         <DialogHeader
-          title="Guardar el cajon"
-          description="El robot lo va a retirar y llevar a su lugar."
+          title="¿A dónde va este cajón?"
+          description="El sistema no tiene registrado de dónde salió, así que hay que indicarlo."
         />
-        {slot && <ReturnBoxForm key={slot.locationCode} slot={slot} onDone={onClose} />}
+        {slot && <AskTargetForm key={slot.locationCode} slot={slot} onDone={onClose} />}
       </DialogContent>
     </Dialog>
   )

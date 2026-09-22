@@ -5,13 +5,10 @@ import { ReturnBoxDialog } from './ReturnBoxDialog'
 import { makeSlot } from '@/test/factories'
 import { renderWithQuery, stubFetch, type FetchCall } from '@/test/render'
 
-const occupiedSlot = makeSlot({
-  locationCode: '3X01AA1',
-  status: 'OCUPADO',
-  currentBox: { id: 'box-1', sourceLocationCode: '3X07AB2' },
-})
-
-/** Tiene un cajon encima pero el sistema no sabe de donde salio. */
+/**
+ * Este dialogo solo aparece cuando el sistema no sabe de donde salio el cajon.
+ * El caso normal no pasa por aca: tocar un cajon lo manda a guardar directo.
+ */
 const slotWithoutBox = makeSlot({
   locationCode: '3X01AA2',
   status: 'OCUPADO',
@@ -29,41 +26,18 @@ function putCalls(): FetchCall[] {
 }
 
 describe('ReturnBoxDialog', () => {
-  it('no encola nada con solo abrirse', () => {
-    renderWithQuery(<ReturnBoxDialog slot={occupiedSlot} onClose={vi.fn()} />)
+  it('no manda nada con solo abrirse', () => {
+    renderWithQuery(<ReturnBoxDialog slot={slotWithoutBox} onClose={vi.fn()} />)
 
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('muestra el destino antes de confirmar', () => {
-    renderWithQuery(<ReturnBoxDialog slot={occupiedSlot} onClose={vi.fn()} />)
-
-    expect(screen.getByText('3X07AB2')).toBeInTheDocument()
-  })
-
-  it('con cajon en libros no manda targetLocation: lo resuelve el backend', async () => {
-    const user = userEvent.setup()
-    renderWithQuery(<ReturnBoxDialog slot={occupiedSlot} onClose={vi.fn()} />)
-
-    await user.click(screen.getByRole('button', { name: /guardar cajon/i }))
-
-    await waitFor(() => {
-      expect(putCalls()).toHaveLength(1)
-    })
-    expect(putCalls()[0]?.body).toEqual({
-      type: 'PUT',
-      origin: 'MANUAL',
-      locationCode: '3X01AA1',
-    })
-  })
-
-  it('sin cajon en libros pide el destino y lo manda', async () => {
+  it('pide el destino y lo manda', async () => {
     const user = userEvent.setup()
     renderWithQuery(<ReturnBoxDialog slot={slotWithoutBox} onClose={vi.fn()} />)
 
-    const input = screen.getByLabelText(/a donde va/i)
-    await user.type(input, '3x09ad1')
-    await user.click(screen.getByRole('button', { name: /guardar cajon/i }))
+    await user.type(screen.getByLabelText(/ubicación del cajón/i), '3x09ad1')
+    await user.click(screen.getByRole('button', { name: /guardar cajón/i }))
 
     await waitFor(() => {
       expect(putCalls()).toHaveLength(1)
@@ -79,13 +53,19 @@ describe('ReturnBoxDialog', () => {
   it('sin destino no deja confirmar', () => {
     renderWithQuery(<ReturnBoxDialog slot={slotWithoutBox} onClose={vi.fn()} />)
 
-    expect(screen.getByRole('button', { name: /guardar cajon/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /guardar cajón/i })).toBeDisabled()
+  })
+
+  it('no se abre cuando no hay slot', () => {
+    renderWithQuery(<ReturnBoxDialog slot={null} onClose={vi.fn()} />)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('avisa al cerrar para que la vista limpie la seleccion', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
-    renderWithQuery(<ReturnBoxDialog slot={occupiedSlot} onClose={onClose} />)
+    renderWithQuery(<ReturnBoxDialog slot={slotWithoutBox} onClose={onClose} />)
 
     await user.click(screen.getByRole('button', { name: /cancelar/i }))
 

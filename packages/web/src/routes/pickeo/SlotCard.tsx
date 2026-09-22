@@ -17,15 +17,15 @@ const SKIN: Record<string, { card: string; bar: string }> = {
 type SlotCardProps = {
   slot: Slot
   display: SlotDisplay
-  /** Solo los slots con un cajon encima se pueden tocar para devolverlo. */
+  /** Solo los slots con un cajón encima se pueden tocar para devolverlo. */
   onReturn: ((slot: Slot) => void) | null
 }
 
 /**
- * Una celda muestra el cajon, no la posicion.
+ * Una celda muestra el cajón, no la posicion.
  *
  * En el deposito nadie conoce el codigo del slot de pickeo: lo que se busca es
- * la ubicacion que aparece en la app de picking, que es la del cajon. Que slot
+ * la ubicación que aparece en la app de picking, que es la del cajón. Que slot
  * es se ve por donde esta la celda en el tablero, que espeja la estanteria.
  */
 export function SlotCard({ slot, display, onReturn }: SlotCardProps) {
@@ -86,7 +86,7 @@ export function SlotCard({ slot, display, onReturn }: SlotCardProps) {
       onClick={() => {
         onReturn(slot)
       }}
-      aria-label={`Guardar ${display.code ?? 'el cajon'}. ${label}`}
+      aria-label={`Guardar ${display.code ?? 'el cajón'}. ${label}`}
     >
       {body}
     </button>

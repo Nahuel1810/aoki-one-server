@@ -5,7 +5,7 @@ import type { Order, Slot } from '@/api/schemas'
  *
  * El front anterior tenia la lista de slots escrita a mano en el navegador
  * (RIGHT_PICK_SLOTS / LEFT_PICK_SLOTS), duplicando config/pickSlots.js. Aca no
- * se asume ninguna ubicacion: el tablero es exactamente lo que /api/slots
+ * se asume ninguna ubicación: el tablero es exactamente lo que /api/slots
  * devuelva, ordenado con los campos `side`, `level` y `position` que el propio
  * backend deriva.
  */
@@ -77,15 +77,15 @@ export function buildBoards(slots: Slot[]): RobotBoard[] {
 }
 
 export type SlotDisplay = {
-  /** Codigo del cajon. Es el unico dato de la celda. */
+  /** Codigo del cajón. Es el unico dato de la celda. */
   code: string | null
 }
 
 /**
  * Que muestra una celda.
  *
- * Un slot con cajon encima muestra la ubicacion de ese cajon: es el codigo que
- * el operario ve en la app de picking. Uno en maniobra muestra el cajon que
+ * Un slot con cajón encima muestra la ubicación de ese cajón: es el codigo que
+ * el operario ve en la app de picking. Uno en maniobra muestra el cajón que
  * viene (PICK) o el que se esta guardando (PUT), que sale de la orden que
  * reservo el slot. Que esta pasando lo dice el estado, no un texto aparte.
  */
@@ -105,7 +105,9 @@ export function slotDisplay(slot: Slot, ordersById: Map<string, Order>): SlotDis
   }
 
   return {
-    code: order.type === 'PICK' ? order.locationCode : (order.targetLocation ?? order.locationCode),
+    // Para un PUT, `locationCode` es el slot de pickeo: un dato interno que
+    // nunca se muestra. Sin `targetLocation` no hay cajón que nombrar.
+    code: order.type === 'PICK' ? order.locationCode : order.targetLocation,
   }
 }
 

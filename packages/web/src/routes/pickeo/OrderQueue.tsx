@@ -1,11 +1,46 @@
+import { RotateCw, X } from 'lucide-react'
 import { errorMessage } from '@/api/client'
 import { useOrderAction } from '@/api/mutations'
 import type { Order } from '@/api/schemas'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { orderStatusLabel, orderStatusTone, orderTypeLabel } from '@/design/status'
 import { cn } from '@/lib/cn'
-import { operationalOrders, orderLocationLabel } from './orders'
+import { operationalOrders, orderBoxLocation } from './orders'
+
+/** Acción al costado: no empuja la tarjeta hacia abajo. */
+function InlineAction({
+  label,
+  icon,
+  tone = 'neutral',
+  disabled,
+  onClick,
+}: {
+  label: string
+  icon: React.ReactNode
+  tone?: 'neutral' | 'fault'
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-control',
+        'border text-[10px] font-bold tracking-wide uppercase transition-colors',
+        'disabled:pointer-events-none disabled:opacity-40',
+        '[&_svg]:size-4',
+        tone === 'fault'
+          ? 'border-fault-border bg-surface text-fault-ink hover:bg-fault-soft'
+          : 'border-border-strong bg-surface text-ink-muted hover:bg-surface-muted hover:text-ink',
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+}
 
 function OrderCard({ order }: { order: Order }) {
   const retry = useOrderAction('retry')
@@ -15,90 +50,110 @@ function OrderCard({ order }: { order: Order }) {
   const steps = order.steps.length
   const progress = steps > 0 ? ((order.currentStepIndex + 1) / steps) * 100 : 0
   const actionError = retry.error ?? cancel.error
+  const box = orderBoxLocation(order)
+  const isManual = order.origin === 'MANUAL'
 
   return (
     <li
       className={cn(
-        'relative grid min-w-64 shrink-0 content-start gap-2 overflow-hidden rounded-control border p-3 shadow-card',
-        isError ? 'border-fault-border bg-fault-soft' : 'border-border bg-surface',
+        'relative flex min-w-80 shrink-0 items-center gap-3 overflow-hidden rounded-control border p-3 shadow-card',
+        isError ? 'border-fault bg-fault-soft' : 'border-border bg-surface',
       )}
     >
       <span
         aria-hidden
         className={cn(
-          'absolute inset-y-0 left-0 w-1',
+          'absolute inset-y-0 left-0 w-1.5',
           isError ? 'bg-fault' : isActive ? 'bg-motion' : 'bg-border-strong',
         )}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2 pl-2">
-        <span className="font-semibold">
-          <span className="text-ink-muted">{orderTypeLabel(order.type)}</span>{' '}
-          <span className="font-code text-base font-extrabold">{orderLocationLabel(order)}</span>
-        </span>
-        <Badge tone={orderStatusTone(order.status)}>{orderStatusLabel(order.status)}</Badge>
+      <div className="grid min-w-0 flex-1 gap-1.5 pl-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-sm text-ink-muted">{orderTypeLabel(order.type)}</span>
+          <span className="font-code text-base font-extrabold">{box ?? '—'}</span>
+
+          {/* De dónde salió el pedido: picking es el flujo normal. */}
+          <span
+            className={cn(
+              'rounded-full border px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase',
+              isManual
+                ? 'border-brand-200 bg-brand-50 text-brand-800'
+                : 'border-border bg-surface-muted text-ink-muted',
+            )}
+          >
+            {isManual ? 'Manual' : 'Picking'}
+          </span>
+
+          <Badge tone={orderStatusTone(order.status)} className="ml-auto">
+            {orderStatusLabel(order.status)}
+          </Badge>
+        </div>
+
+        {/* Una sola línea: el motivo del error no puede estirar la tarjeta. */}
+        {isError && order.errorReason ? (
+          <p className="truncate text-xs font-medium text-fault-ink" title={order.errorReason}>
+            {order.errorReason}
+          </p>
+        ) : order.waitingForSlot ? (
+          <p className="truncate text-xs font-semibold text-ink-muted">Esperando lugar libre</p>
+        ) : (
+          <span
+            aria-hidden
+            className="h-1.5 overflow-hidden rounded-full bg-surface-muted"
+            title={
+              steps > 0 ? `Paso ${String(order.currentStepIndex + 1)} de ${String(steps)}` : ''
+            }
+          >
+            <span
+              className={cn(
+                'block h-full rounded-full transition-all duration-500',
+                isActive ? 'bg-motion' : 'bg-transparent',
+              )}
+              style={{ width: `${String(isActive ? progress : 0)}%` }}
+            />
+          </span>
+        )}
+
+        {actionError && (
+          <p role="alert" className="truncate text-xs font-semibold text-fault-ink">
+            {errorMessage(actionError)}
+          </p>
+        )}
       </div>
 
-      {/* Barra de avance en vez de "Paso 3 de 5": se lee sin leer. */}
-      {isActive && steps > 0 && (
-        <span aria-hidden className="ml-2 h-1.5 overflow-hidden rounded-full bg-surface-muted">
-          <span
-            className="block h-full rounded-full bg-motion transition-all duration-500"
-            style={{ width: `${String(progress)}%` }}
-          />
-        </span>
-      )}
-
-      {order.waitingForSlot && (
-        <span className="pl-2 text-xs font-semibold text-ink-muted">Esperando lugar libre</span>
-      )}
-
-      {isError && order.errorReason && (
-        <p className="pl-2 text-xs font-medium text-fault-ink">{order.errorReason}</p>
-      )}
-
-      {/*
-       * Reintentar y cancelar solo aparecen en pedidos trabados (RF08).
-       * En el front anterior estaban en todas las tarjetas, invitando a
-       * cancelar por accidente uno que venia bien.
-       */}
-      {isError && (
-        <div className="flex flex-wrap gap-2 pl-2">
-          <Button
-            variant="secondary"
-            size="compact"
+      <div className="flex shrink-0 items-center gap-1.5">
+        {isError && (
+          <InlineAction
+            label="Reintentar"
+            icon={<RotateCw aria-hidden />}
             disabled={retry.isPending}
             onClick={() => {
               retry.mutate(order.id)
             }}
-          >
-            Reintentar
-          </Button>
-          <Button
-            variant="ghost"
-            size="compact"
-            disabled={cancel.isPending}
-            onClick={() => {
-              cancel.mutate(order.id)
-            }}
-          >
-            Cancelar
-          </Button>
-        </div>
-      )}
-
-      {actionError && (
-        <p role="alert" className="pl-2 text-xs font-semibold text-fault-ink">
-          {errorMessage(actionError)}
-        </p>
-      )}
+          />
+        )}
+        {/*
+         * Cancelar está en cualquier estado, no solo en error: un pedido
+         * mandado por equivocación se saca sin esperar a que falle.
+         */}
+        <InlineAction
+          label="Cancelar"
+          icon={<X aria-hidden />}
+          tone="fault"
+          disabled={cancel.isPending}
+          onClick={() => {
+            cancel.mutate(order.id)
+          }}
+        />
+      </div>
     </li>
   )
 }
 
 /**
  * Los pedidos van debajo del tablero, en fila: son contexto de lo que el
- * robot esta haciendo, no la tarea principal.
+ * robot está haciendo, no la tarea principal.
  */
 export function OrderQueue({ orders }: { orders: Order[] }) {
   const rows = operationalOrders(orders)
@@ -108,7 +163,7 @@ export function OrderQueue({ orders }: { orders: Order[] }) {
   }
 
   return (
-    <ul className="flex gap-2 overflow-x-auto pb-1">
+    <ul className="flex items-stretch gap-2 overflow-x-auto pb-1">
       {rows.map((order) => (
         <OrderCard key={order.id} order={order} />
       ))}

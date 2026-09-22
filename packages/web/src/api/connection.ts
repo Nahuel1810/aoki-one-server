@@ -23,7 +23,7 @@ function computeStatus(queryClient: QueryClient): ConnectionStatus {
   }
 
   if (error instanceof NetworkError) {
-    return { kind: 'offline', message: 'Sin conexion con el servidor' }
+    return { kind: 'offline', message: 'Sin conexión con el servidor' }
   }
 
   if (error instanceof ContractError) {

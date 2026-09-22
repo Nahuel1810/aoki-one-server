@@ -30,7 +30,7 @@ export type OrderOrigin = (typeof ORDER_ORIGINS)[number]
 /*
  * Las etiquetas dicen que significa el estado para quien esta en el deposito,
  * no como se llama adentro del sistema. Un slot OCUPADO, para el operario, es
- * un cajon que ya lo esta esperando: "Listo", no "Ocupado".
+ * un cajón que ya lo esta esperando: "Listo", no "Ocupado".
  */
 const SLOT_LABELS: Record<SlotStatus, string> = {
   LIBRE: 'Libre',

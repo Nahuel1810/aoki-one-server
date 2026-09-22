@@ -18,7 +18,7 @@ function useOperationsInvalidation(): () => Promise<void> {
 
 export type PickOrderInput = { locationCode: string }
 
-/** Pedido manual de un cajon. El flujo normal entra por la API de picking. */
+/** Pedido manual de un cajón. El flujo normal entra por la API de picking. */
 export function useCreatePickOrder(): UseMutationResult<void, Error, PickOrderInput> {
   const invalidate = useOperationsInvalidation()
 
@@ -34,14 +34,14 @@ export function useCreatePickOrder(): UseMutationResult<void, Error, PickOrderIn
 }
 
 export type PutOrderInput = {
-  /** Slot de pickeo desde donde sale el cajon. */
+  /** Slot de pickeo desde donde sale el cajón. */
   slotLocationCode: string
   /**
-   * Destino. Se envia SOLO cuando el slot esta vacio en libros (RF12): si hay
-   * cajon registrado, el destino lo resuelve el backend desde
-   * `currentBox.sourceLocationCode` y mandarlo seria pisarlo.
+   * A dónde va el cajón. Obligatorio: sin destino, el backend actual resuelve
+   * el PUT contra el propio slot de pickeo, el robot "devuelve" el cajón donde
+   * ya estaba y el slot se marca libre con el cajón todavía encima.
    */
-  targetLocation?: string
+  targetLocation: string
 }
 
 export function useCreatePutOrder(): UseMutationResult<void, Error, PutOrderInput> {
@@ -53,7 +53,7 @@ export function useCreatePutOrder(): UseMutationResult<void, Error, PutOrderInpu
         type: 'PUT',
         origin: 'MANUAL',
         locationCode: slotLocationCode.trim().toUpperCase(),
-        ...(targetLocation ? { targetLocation: targetLocation.trim().toUpperCase() } : {}),
+        targetLocation: targetLocation.trim().toUpperCase(),
       }),
     onSuccess: invalidate,
   })
@@ -69,7 +69,7 @@ export function useOrderAction(action: 'retry' | 'cancel'): UseMutationResult<vo
   })
 }
 
-/** Corrige los libros. NO mueve el robot ni el cajon fisico. */
+/** Corrige los libros. NO mueve el robot ni el cajón fisico. */
 export function useReleaseSlot(): UseMutationResult<void, Error, string> {
   const invalidate = useOperationsInvalidation()
 
