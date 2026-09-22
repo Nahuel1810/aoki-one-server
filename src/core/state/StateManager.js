@@ -16,9 +16,18 @@ function normalizeLocationCode(value) {
 }
 
 function buildInitialSlot(locationCode) {
+  /** Lado, robot, nivel y posicion se derivan de la ubicacion. Se exponen en la
+   * API para que la UI agrupe y ordene los slots segun su disposicion fisica
+   * sin reimplementar la gramatica de locationCode. */
+  const parsed = parseLocationCode(locationCode);
+
   return {
     id: randomUUID(),
     locationCode,
+    side: parsed.side,
+    robotId: parsed.robotId,
+    level: parsed.levelNumber,
+    position: parsed.position,
     status: SLOT_STATUS.FREE,
     reservedByOrderId: null,
     currentBox: null,
@@ -87,10 +96,17 @@ class StateManager {
 
     for (const slot of snapshot.slots || []) {
       const normalized = normalizeLocationCode(slot.locationCode);
+      const base = buildInitialSlot(normalized);
       this.slots.set(normalized, {
-        ...buildInitialSlot(normalized),
+        ...base,
         ...slot,
         locationCode: normalized,
+        // Derivados de la ubicacion: nunca se toman del snapshot, que puede
+        // venir de una version anterior a que existieran estos campos.
+        side: base.side,
+        robotId: base.robotId,
+        level: base.level,
+        position: base.position,
         updatedAt: Date.now(),
       });
     }

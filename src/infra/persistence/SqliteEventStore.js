@@ -81,13 +81,45 @@ class SqliteEventStore {
     }
 
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-    const pickingWhere = where ? `${where} AND origin = 'PICKING'` : "WHERE origin = 'PICKING'";
     const pickWhere = where ? `${where} AND type = 'PICK'` : "WHERE type = 'PICK'";
+
+    /**
+     * Un pedido se cuenta por su PICK. El PUT que lo cierra es la otra mitad
+     * del mismo pedido, no uno nuevo: "traer el cajon y guardarlo" es 1.
+     * Las maniobras (cada PICK y cada PUT) se siguen exponiendo aparte para
+     * medir trabajo del robot, que es otra pregunta.
+     */
     const totalRow = this.db
       .prepare(`SELECT COUNT(*) as total FROM order_metrics ${where}`)
       .get(params);
+    const ordersRow = this.db
+      .prepare(`SELECT COUNT(*) as total FROM order_metrics ${pickWhere}`)
+      .get(params);
     const pickingRow = this.db
-      .prepare(`SELECT COUNT(*) as total FROM order_metrics ${pickingWhere}`)
+      .prepare(`SELECT COUNT(*) as total FROM order_metrics ${pickWhere} AND origin = 'PICKING'`)
+      .get(params);
+    const manualRow = this.db
+      .prepare(`SELECT COUNT(*) as total FROM order_metrics ${pickWhere} AND origin = 'MANUAL'`)
+      .get(params);
+
+    /**
+     * Cuanto tarda un cajon en estar disponible, medido de punta a punta:
+     * desde que entro el pedido hasta que la maniobra termino. Es el numero
+     * que responde "cuanto espera el que vino a buscar el cajon".
+     */
+    const timingRow = this.db
+      .prepare(
+        `SELECT AVG(waiting_ms + duration_ms) as avgMs,
+                MAX(waiting_ms + duration_ms) as maxMs,
+                AVG(waiting_ms) as avgWaitMs
+         FROM order_metrics
+         ${pickWhere} AND status = 'DONE'`
+      )
+      .get(params);
+
+    const failedWhere = where ? `${where} AND status = 'ERROR'` : "WHERE status = 'ERROR'";
+    const failedRow = this.db
+      .prepare(`SELECT COUNT(*) as total FROM order_metrics ${failedWhere}`)
       .get(params);
     const byLocation = this.db
       .prepare(
@@ -116,11 +148,25 @@ class SqliteEventStore {
       .all(params);
 
     const total = Number(totalRow?.total || 0);
+    const totalOrders = Number(ordersRow?.total || 0);
+
     return {
       total,
       summary: {
-        totalManoeuvres: total,
+        /** Pedidos: un buscar + su guardar cuentan como uno. */
+        totalOrders,
         pickingOrders: Number(pickingRow?.total || 0),
+        manualOrders: Number(manualRow?.total || 0),
+        /** Movimientos fisicos del robot: cada PICK y cada PUT. */
+        totalManoeuvres: total,
+        /** Maniobras que costo cada pedido. Idealmente 2 (traer y guardar). */
+        manoeuvresPerOrder: totalOrders > 0 ? total / totalOrders : 0,
+        failedOrders: Number(failedRow?.total || 0),
+        /** Milisegundos desde que entra el pedido hasta que el cajon esta listo. */
+        avgTimeToSlotMs: Math.round(Number(timingRow?.avgMs || 0)),
+        maxTimeToSlotMs: Math.round(Number(timingRow?.maxMs || 0)),
+        /** Cuanto de esa espera fue cola y no maniobra. */
+        avgQueueMs: Math.round(Number(timingRow?.avgWaitMs || 0)),
       },
       byLocation,
       items,
