@@ -8,7 +8,6 @@
 // persistencia no llaman a `randomUUID` ni a `Date.now()`), y persistir es una
 // responsabilidad distinta de loguear.
 
-import { noImplementado } from '@aoki-one/domain'
 
 import type { BaseDelAgente } from './database.js'
 
@@ -52,5 +51,70 @@ export interface EventRepository {
 }
 
 export function crearEventRepository(base: BaseDelAgente): EventRepository {
-  return noImplementado('crearEventRepository', { base })
+  const { sql } = base
+
+  function aFila(fila: FilaDeEvento): Evento {
+    return {
+      id: fila.id,
+      ts: fila.ts,
+      tipoDeEntidad: fila.tipo_entidad as TipoDeEntidad,
+      entidadId: fila.entidad_id,
+      evento: fila.evento,
+      severidad: fila.severidad as SeveridadDeEvento,
+      metadata: JSON.parse(fila.metadata_json) as Readonly<Record<string, unknown>>,
+    }
+  }
+
+  return {
+    registrar: (evento) => {
+      sql
+        .prepare(
+          `INSERT INTO events (id, ts, tipo_entidad, entidad_id, evento, severidad, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          evento.id,
+          evento.ts,
+          evento.tipoDeEntidad,
+          evento.entidadId,
+          evento.evento,
+          evento.severidad,
+          JSON.stringify(evento.metadata),
+        )
+      return Promise.resolve(evento)
+    },
+
+    listar: (filtro) => {
+      const condiciones: string[] = []
+      const parametros: unknown[] = []
+
+      if (filtro.tipoDeEntidad !== undefined) {
+        condiciones.push('tipo_entidad = ?')
+        parametros.push(filtro.tipoDeEntidad)
+      }
+      if (filtro.entidadId !== undefined) {
+        condiciones.push('entidad_id = ?')
+        parametros.push(filtro.entidadId)
+      }
+
+      const donde = condiciones.length === 0 ? '' : ` WHERE ${condiciones.join(' AND ')}`
+      // Del mas nuevo al mas viejo: lo primero que se mira ante un error es lo ultimo
+      // que paso.
+      const filas = sql
+        .prepare(`SELECT * FROM events${donde} ORDER BY ts DESC, id DESC`)
+        .all(...parametros)
+
+      return Promise.resolve(filas.map((f: unknown) => aFila(f as FilaDeEvento)))
+    },
+  }
+}
+
+interface FilaDeEvento {
+  readonly id: string
+  readonly ts: number
+  readonly tipo_entidad: string
+  readonly entidad_id: string
+  readonly evento: string
+  readonly severidad: string
+  readonly metadata_json: string
 }

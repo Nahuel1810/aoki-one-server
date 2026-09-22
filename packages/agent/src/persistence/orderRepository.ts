@@ -5,7 +5,6 @@
 // `(robot_id, status, created_at)` para resolver la cola sin traer todo a
 // memoria.
 
-import { noImplementado } from '@aoki-one/domain'
 import type { EstadoOrden, Result, TipoOrden } from '@aoki-one/domain'
 
 import type { BaseDelAgente } from './database.js'
@@ -92,5 +91,173 @@ export interface OrderRepository {
 }
 
 export function crearOrderRepository(base: BaseDelAgente): OrderRepository {
-  return noImplementado('crearOrderRepository', { base })
+  const { sql } = base
+
+  function aFila(fila: FilaDeOrden): Orden {
+    return {
+      id: fila.id,
+      siteId: fila.site_id,
+      robotId: fila.robot_id,
+      externalOrderId: fila.external_order_id,
+      tipo: fila.tipo as Orden['tipo'],
+      origen: fila.origen as OrigenDeOrden,
+      estado: fila.estado as Orden['estado'],
+      locationCode: fila.location_code,
+      targetLocation: fila.target_location,
+      slotLocationCode: fila.slot_location_code,
+      currentStepIndex: fila.current_step_index,
+      waitingForSlot: fila.waiting_for_slot === 1,
+      errorReason: fila.error_reason,
+      creadaEn: fila.creada_en,
+      iniciadaEn: fila.iniciada_en,
+      finalizadaEn: fila.finalizada_en,
+    }
+  }
+
+  function buscar(ordenId: string): Orden | undefined {
+    const fila = sql.prepare('SELECT * FROM orders WHERE id = ?').get(ordenId)
+    return fila === undefined ? undefined : aFila(fila as FilaDeOrden)
+  }
+
+  return {
+    crear: (orden) => {
+      try {
+        sql
+          .prepare(
+            `INSERT INTO orders (
+               id, site_id, robot_id, external_order_id, tipo, origen, estado,
+               location_code, target_location, slot_location_code,
+               current_step_index, waiting_for_slot, error_reason,
+               creada_en, iniciada_en, finalizada_en
+             ) VALUES (
+               @id, @siteId, @robotId, @externalOrderId, @tipo, @origen, @estado,
+               @locationCode, @targetLocation, @slotLocationCode,
+               @currentStepIndex, @waitingForSlot, @errorReason,
+               @creadaEn, @iniciadaEn, @finalizadaEn
+             )`,
+          )
+          .run({
+            ...orden,
+            waitingForSlot: orden.waitingForSlot ? 1 : 0,
+          })
+        return Promise.resolve({ ok: true as const, valor: orden })
+      } catch (error) {
+        // El duplicado lo rechaza el indice unico, no un SELECT previo: asi no hay
+        // ventana entre la consulta y la insercion.
+        if (esViolacionDeUnicidad(error)) {
+          return Promise.resolve({
+            ok: false as const,
+            error: {
+              codigo: 'EXTERNAL_ORDER_ID_DUPLICADO' as const,
+              siteId: orden.siteId,
+              externalOrderId: orden.externalOrderId ?? '',
+            },
+          })
+        }
+        throw error
+      }
+    },
+
+    buscarPorId: (ordenId) => Promise.resolve(buscar(ordenId)),
+
+    buscarPorExternalOrderId: (siteId, externalOrderId) => {
+      const fila = sql
+        .prepare('SELECT * FROM orders WHERE site_id = ? AND external_order_id = ?')
+        .get(siteId, externalOrderId)
+      return Promise.resolve(fila === undefined ? undefined : aFila(fila as FilaDeOrden))
+    },
+
+    listar: (filtro) => {
+      const condiciones: string[] = []
+      const parametros: unknown[] = []
+
+      if (filtro.siteId !== undefined) {
+        condiciones.push('site_id = ?')
+        parametros.push(filtro.siteId)
+      }
+      if (filtro.robotId !== undefined) {
+        condiciones.push('robot_id = ?')
+        parametros.push(filtro.robotId)
+      }
+      if (filtro.estados !== undefined && filtro.estados.length > 0) {
+        condiciones.push(`estado IN (${filtro.estados.map(() => '?').join(', ')})`)
+        parametros.push(...filtro.estados)
+      }
+
+      const donde = condiciones.length === 0 ? '' : ` WHERE ${condiciones.join(' AND ')}`
+      const filas = sql
+        .prepare(`SELECT * FROM orders${donde} ORDER BY creada_en, id`)
+        .all(...parametros)
+
+      return Promise.resolve(filas.map((f: unknown) => aFila(f as FilaDeOrden)))
+    },
+
+    actualizar: (ordenId, cambios) => {
+      const actual = buscar(ordenId)
+      if (actual === undefined) {
+        return Promise.resolve({
+          ok: false as const,
+          error: { codigo: 'ORDEN_INEXISTENTE' as const, ordenId },
+        })
+      }
+
+      // Escritura incremental por entidad: se tocan solo los campos que cambian,
+      // en vez del volcado del snapshot completo que hacia el legacy en cada paso.
+      const siguiente: Orden = { ...actual, ...cambios }
+      sql
+        .prepare(
+          `UPDATE orders SET
+             estado = @estado,
+             target_location = @targetLocation,
+             slot_location_code = @slotLocationCode,
+             current_step_index = @currentStepIndex,
+             waiting_for_slot = @waitingForSlot,
+             error_reason = @errorReason,
+             iniciada_en = @iniciadaEn,
+             finalizada_en = @finalizadaEn
+           WHERE id = @id`,
+        )
+        .run({
+          id: ordenId,
+          estado: siguiente.estado,
+          targetLocation: siguiente.targetLocation,
+          slotLocationCode: siguiente.slotLocationCode,
+          currentStepIndex: siguiente.currentStepIndex,
+          waitingForSlot: siguiente.waitingForSlot ? 1 : 0,
+          errorReason: siguiente.errorReason,
+          iniciadaEn: siguiente.iniciadaEn,
+          finalizadaEn: siguiente.finalizadaEn,
+        })
+
+      return Promise.resolve({ ok: true as const, valor: siguiente })
+    },
+  }
+}
+
+/** SQLite marca la violacion de indice unico con este codigo. */
+function esViolacionDeUnicidad(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') {
+    return false
+  }
+  const codigo = (error as { code?: unknown }).code
+  return typeof codigo === 'string' && codigo.startsWith('SQLITE_CONSTRAINT')
+}
+
+interface FilaDeOrden {
+  readonly id: string
+  readonly site_id: string
+  readonly robot_id: string
+  readonly external_order_id: string | null
+  readonly tipo: string
+  readonly origen: string
+  readonly estado: string
+  readonly location_code: string
+  readonly target_location: string | null
+  readonly slot_location_code: string | null
+  readonly current_step_index: number
+  readonly waiting_for_slot: number
+  readonly error_reason: string | null
+  readonly creada_en: number
+  readonly iniciada_en: number | null
+  readonly finalizada_en: number | null
 }

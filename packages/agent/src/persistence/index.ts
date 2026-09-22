@@ -1,7 +1,12 @@
 // Repositorios del agente, uno por entidad (RF23).
 
-import { noImplementado } from '@aoki-one/domain'
 
+import { crearDeviceRepository } from './deviceRepository.js'
+import { crearEventRepository } from './eventRepository.js'
+import { crearOrderRepository } from './orderRepository.js'
+import { crearOrderStepRepository } from './orderStepRepository.js'
+import { crearRobotRepository } from './robotRepository.js'
+import { crearSlotRepository } from './slotRepository.js'
 import type { BaseDelAgente } from './database.js'
 import type { DeviceRepository } from './deviceRepository.js'
 import type { EventRepository } from './eventRepository.js'
@@ -30,5 +35,12 @@ export interface RepositoriosDelAgente {
 }
 
 export function crearRepositorios(base: BaseDelAgente): RepositoriosDelAgente {
-  return noImplementado('crearRepositorios', { base })
+  return {
+    robots: crearRobotRepository(base),
+    ordenes: crearOrderRepository(base),
+    pasos: crearOrderStepRepository(base),
+    slots: crearSlotRepository(base),
+    eventos: crearEventRepository(base),
+    dispositivos: crearDeviceRepository(base),
+  }
 }

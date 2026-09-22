@@ -8,7 +8,6 @@
 // Los slots se identifican y se deduplican por baseCode: `3X02AE1T` y `3X02AE1`
 // son el mismo slot.
 
-import { noImplementado } from '@aoki-one/domain'
 import type {
   ErrorSeleccionSlot,
   EstadoSlot,
@@ -18,6 +17,7 @@ import type {
 } from '@aoki-one/domain'
 
 import type { BaseDelAgente } from './database.js'
+import { parsearLocationCode } from '@aoki-one/domain'
 
 export interface SlotDeRobot {
   readonly robotId: string
@@ -94,5 +94,125 @@ export interface SlotRepository {
 }
 
 export function crearSlotRepository(base: BaseDelAgente): SlotRepository {
-  return noImplementado('crearSlotRepository', { base })
+  const { sql } = base
+
+  function aFila(fila: FilaDeSlot): SlotDeRobot {
+    return {
+      robotId: fila.robot_id,
+      locationCode: fila.location_code,
+      lado: fila.lado as Lado,
+      estado: JSON.parse(fila.estado_json) as EstadoSlot,
+      actualizadoEn: fila.actualizado_en,
+    }
+  }
+
+  return {
+    listarPorRobot: (robotId) =>
+      Promise.resolve(
+        sql
+          .prepare('SELECT * FROM slots WHERE robot_id = ? ORDER BY location_code')
+          .all(robotId)
+          .map((f: unknown) => aFila(f as FilaDeSlot)),
+      ),
+
+    buscar: (robotId, locationCode) => {
+      const fila = sql
+        .prepare('SELECT * FROM slots WHERE robot_id = ? AND location_code = ?')
+        .get(robotId, locationCode)
+      return Promise.resolve(fila === undefined ? undefined : aFila(fila as FilaDeSlot))
+    },
+
+    buscarPorCajonDeOrigen: (robotId, ubicacionDeOrigen) => {
+      // Se compara por baseCode: el id del cajon es sintetico y no sirve de clave.
+      const encontrado = sql
+        .prepare('SELECT * FROM slots WHERE robot_id = ?')
+        .all(robotId)
+        .map((f: unknown) => aFila(f as FilaDeSlot))
+        .find((slot: SlotDeRobot) => {
+          const contenido =
+            'contenido' in slot.estado ? slot.estado.contenido : null
+          return contenido?.cajon.ubicacionDeOrigen === ubicacionDeOrigen
+        })
+      return Promise.resolve(encontrado)
+    },
+
+    guardarEstado: (robotId, locationCode, estado) => {
+      const existente = sql
+        .prepare('SELECT * FROM slots WHERE robot_id = ? AND location_code = ?')
+        .get(robotId, locationCode)
+      if (existente === undefined) {
+        // No se crea al vuelo: un slot que no esta en la zona de pickeo no existe.
+        return Promise.resolve({
+          ok: false as const,
+          error: { codigo: 'SLOT_INEXISTENTE' as const, locationCode },
+        })
+      }
+
+      const actualizadoEn = (existente as FilaDeSlot).actualizado_en + 1
+      sql
+        .prepare(
+          'UPDATE slots SET estado_json = ?, actualizado_en = ? WHERE robot_id = ? AND location_code = ?',
+        )
+        .run(JSON.stringify(estado), actualizadoEn, robotId, locationCode)
+
+      return Promise.resolve({
+        ok: true as const,
+        valor: {
+          robotId,
+          locationCode,
+          lado: (existente as FilaDeSlot).lado as Lado,
+          estado,
+          actualizadoEn,
+        },
+      })
+    },
+
+    sembrarZonaDePickeo: (robotId, locationCodes) => {
+      const vistos = new Set<string>()
+
+      for (const codigo of locationCodes) {
+        const parseado = parsearLocationCode(codigo)
+        if (!parseado.ok) {
+          return Promise.resolve({
+            ok: false as const,
+            error: {
+              codigo: 'SLOT_CON_CODIGO_INVALIDO' as const,
+              locationCode: codigo,
+              causa: parseado.error,
+            },
+          })
+        }
+
+        // Deduplicado por baseCode: 3X02AE1T y 3X02AE1 son una sola fila.
+        const baseCode = parseado.valor.baseCode
+        if (vistos.has(baseCode)) {
+          continue
+        }
+        vistos.add(baseCode)
+
+        // INSERT OR IGNORE: un slot que ya estaba CONSERVA su estado. Sembrar la
+        // zona al arrancar no puede pisar lo que el robot dejo apoyado (RF15).
+        sql
+          .prepare(
+            'INSERT OR IGNORE INTO slots (robot_id, location_code, lado, estado_json, actualizado_en) VALUES (?, ?, ?, ?, 0)',
+          )
+          .run(robotId, baseCode, parseado.valor.lado, JSON.stringify({ estado: 'LIBRE' }))
+      }
+
+      const zona = sql
+        .prepare('SELECT * FROM slots WHERE robot_id = ? ORDER BY location_code')
+        .all(robotId)
+        .map((f: unknown) => aFila(f as FilaDeSlot))
+
+      return Promise.resolve({ ok: true as const, valor: zona })
+    },
+  }
+}
+
+interface FilaDeSlot {
+  readonly robot_id: string
+  readonly location_code: string
+  readonly lado: string
+  readonly estado_json: string
+  readonly actualizado_en: number
 }
