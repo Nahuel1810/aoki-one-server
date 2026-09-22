@@ -66,6 +66,33 @@ test.describe('Zona de pickeo', () => {
     await expect(page.getByRole('button', { name: 'Reintentar' })).toHaveCount(1)
   })
 
+  test('el texto de las acciones entra en su boton', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+    await page.getByText('Pedidos en curso').waitFor()
+
+    // "Cancelar" no entraba en el boton cuadrado de 48px y se salia del borde.
+    for (const name of ['Cancelar', 'Reintentar']) {
+      const boton = page.getByRole('button', { name }).first()
+      const entra = await boton.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)
+      expect(entra, `el texto de "${name}" se desborda`).toBe(true)
+    }
+  })
+
+  test('la tarjeta de un pedido con error mide lo mismo que una sana', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+    await page.getByText('Pedidos en curso').waitFor()
+
+    // El motivo del error no puede estirar la tarjeta a lo alto.
+    const alturas = await page
+      .locator('li')
+      .filter({ hasText: /Buscar|Guardar/ })
+      .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().height)))
+
+    expect(new Set(alturas).size).toBe(1)
+  })
+
   test('nunca se muestra la ubicacion de un slot de pickeo', async ({ page }) => {
     await mockApi(page)
     await page.goto('/')

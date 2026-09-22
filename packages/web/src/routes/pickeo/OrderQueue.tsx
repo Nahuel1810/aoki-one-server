@@ -27,8 +27,10 @@ function InlineAction({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-control',
-        'border text-[10px] font-bold tracking-wide uppercase transition-colors',
+        // Ancho automático: en un cuadrado de 48px la palabra no entra y se
+        // sale del borde. El alto fijo mantiene la tarjeta siempre igual.
+        'flex h-12 shrink-0 items-center gap-1.5 rounded-control px-3',
+        'border text-xs font-bold whitespace-nowrap transition-colors',
         'disabled:pointer-events-none disabled:opacity-40',
         '[&_svg]:size-4',
         tone === 'fault'
