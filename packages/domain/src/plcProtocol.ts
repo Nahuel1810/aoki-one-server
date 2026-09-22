@@ -2,7 +2,6 @@
 // RF03 — Protocolo del PLC: decodificacion de la respuesta y error fatal.
 
 import type { Accion, AccionBit, LadoBit, Nivel, Posicion, UbicacionParseada } from './locationCode.js'
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 
 /** Los dos dispositivos de un robot. Cada uno tiene su propio cliente y su propio mutex. */
@@ -51,7 +50,27 @@ export function construirComandoCarro(
   ubicacion: UbicacionParseada,
   accionOverride?: Accion,
 ): Result<ComandoCarro, ErrorComandoCarro> {
-  return noImplementado('construirComandoCarro', { ubicacion, accionOverride })
+  const accion = accionOverride ?? ubicacion.accion
+  if (accion === null) {
+    return { ok: false, error: { codigo: 'ACCION_INDETERMINADA', baseCode: ubicacion.baseCode } }
+  }
+
+  // Dos modulos consecutivos comparten parante y se distinguen solo por el ladoBit.
+  const parante = Math.ceil(ubicacion.modulo / 2)
+  const accionBit: AccionBit = accion === 'T' ? 1 : 0
+  const texto = `${String(ubicacion.posicion)}${String(parante).padStart(2, '0')}${String(ubicacion.ladoBit)}${String(accionBit)}`
+
+  return {
+    ok: true,
+    valor: {
+      texto,
+      codigo: Number(texto),
+      posicion: ubicacion.posicion,
+      parante,
+      ladoBit: ubicacion.ladoBit,
+      accionBit,
+    },
+  }
 }
 
 /**
@@ -61,7 +80,7 @@ export function construirComandoCarro(
  * inalcanzable. No devuelve `Result` porque no tiene forma de fallar.
  */
 export function construirComandoElevadorIrNivel(nivel: Nivel): number {
-  return noImplementado('construirComandoElevadorIrNivel', { nivel })
+  return 100 + nivel
 }
 
 /**
@@ -99,6 +118,39 @@ export type RespuestaPlc =
   | { readonly kind: 'DESCONOCIDO'; readonly valor: number }
 
 /**
+ * Tabla de errores del CARRO, portada literal de `src/config/plcProtocol.js`.
+ *
+ * Los codigos 1, 2, 17, 18 y 99 tambien existen en la tabla del elevador con
+ * OTRO significado: por eso `decodificarRespuesta` necesita saber quien respondio.
+ */
+const ERRORES_CARRO: Readonly<Record<number, string>> = {
+  1: 'Carro trabado avanzando',
+  2: 'Carro trabado volviendo',
+  6: 'No hay cajon',
+  7: 'Problema con el puente',
+  14: 'Inicio con cajon cargado',
+  16: 'Bateria baja',
+  17: 'Obstaculo volviendo',
+  18: 'Obstaculo avanzando',
+  99: 'No logro recuperarse',
+}
+
+/** Tabla de errores del ELEVADOR, portada literal de `src/config/plcProtocol.js`. */
+const ERRORES_ELEVADOR: Readonly<Record<number, string>> = {
+  1: 'Elev trabado subiendo',
+  2: 'Elev trabado bajando',
+  3: 'Nivel incorrecto',
+  17: 'Elev llego a limite inferior',
+  18: 'Elev llego a limite superior',
+  55: 'Ambas direcciones simultaneas',
+  66: 'Llego a Home sin ir a Home',
+  99: 'No logro recuperarse',
+}
+
+/** `99` = "No logro recuperarse": el unico fatal, en los dos dispositivos. */
+const CODIGO_ERROR_FATAL = 99
+
+/**
  * Decodifica un valor leido de `messageOut`.
  *
  * `dispositivo` es OBLIGATORIO y ahi esta el arreglo de un bug de planta: el
@@ -113,5 +165,29 @@ export type RespuestaPlc =
  * mismo paso.
  */
 export function decodificarRespuesta(valor: number, dispositivo: TipoDispositivo): RespuestaPlc {
-  return noImplementado('decodificarRespuesta', { valor, dispositivo })
+  if (valor === 100) {
+    return { kind: 'OK' }
+  }
+
+  if (valor >= 101 && valor <= 199) {
+    const codigoError = valor - 100
+    const tabla = dispositivo === 'CARRO' ? ERRORES_CARRO : ERRORES_ELEVADOR
+    return {
+      kind: 'ERROR',
+      codigoError,
+      // Se resuelve contra la tabla del dispositivo que respondio, no contra las dos.
+      mensaje: tabla[codigoError] ?? 'Error PLC',
+      fatal: codigoError === CODIGO_ERROR_FATAL,
+    }
+  }
+
+  if (valor >= 200 && valor <= 299) {
+    return { kind: 'NIVEL', nivel: valor - 200 }
+  }
+
+  if (valor === 300 || valor === 301) {
+    return { kind: 'PRESENCIA_CARRO', presente: valor === 300 }
+  }
+
+  return { kind: 'DESCONOCIDO', valor }
 }

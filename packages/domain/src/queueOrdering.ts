@@ -10,7 +10,6 @@
 // Funcion pura: la cola concreta (memoria, SQLite, driver externo) es del
 // agente; aca solo se decide cual sigue.
 
-import { noImplementado } from './noImplementado.js'
 
 /** Lo minimo que la regla de servicio necesita saber de una orden en espera. */
 export interface OrdenEnCola {
@@ -36,5 +35,13 @@ export interface OrdenEnCola {
  * agente, que consulta por `(robot_id, status, created_at)`.
  */
 export function elegirProximaOrden(cola: readonly OrdenEnCola[]): OrdenEnCola | undefined {
-  return noImplementado('elegirProximaOrden', { cola })
+  // FIFO estricto por antiguedad. Ante empate gana el que llego antes en la lista,
+  // que es el orden de insercion.
+  let proxima: OrdenEnCola | undefined
+  for (const orden of cola) {
+    if (proxima === undefined || orden.creadaEn < proxima.creadaEn) {
+      proxima = orden
+    }
+  }
+  return proxima
 }

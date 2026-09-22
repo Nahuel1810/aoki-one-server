@@ -5,7 +5,6 @@
 // pura: el compilador obliga a cubrir cada par (estado, evento) y una transicion
 // invalida devuelve error del dominio, nunca null ni un estado silencioso.
 
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 
 /**
@@ -177,5 +176,60 @@ export function transicionarSlot(
   estado: EstadoSlot,
   evento: EventoSlot,
 ): Result<EstadoSlot, ErrorTransicionSlot> {
-  return noImplementado('transicionarSlot', { estado, evento })
+  const rechazo: Result<EstadoSlot, ErrorTransicionSlot> = {
+    ok: false,
+    error: { codigo: 'TRANSICION_INVALIDA', desde: estado.estado, evento: evento.tipo },
+  }
+
+  switch (evento.tipo) {
+    case 'RESERVAR_PARA_PICK':
+      // Solo desde LIBRE: la reserva es exclusiva y una segunda reserva se rechaza.
+      return estado.estado === 'LIBRE'
+        ? { ok: true, valor: { estado: 'RESERVADO', ordenId: evento.ordenId, contenido: null } }
+        : rechazo
+
+    case 'RESERVAR_PARA_PUT':
+      // Desde LIBRE es la devolucion manual fuera-de-libros; desde OCUPADO es la
+      // estandar y CONSERVA el cajon con su ubicacion de origen, que es de donde
+      // sale el destino de la devolucion (RF11).
+      if (estado.estado === 'LIBRE') {
+        return { ok: true, valor: { estado: 'RESERVADO', ordenId: evento.ordenId, contenido: null } }
+      }
+      if (estado.estado === 'OCUPADO') {
+        return {
+          ok: true,
+          valor: { estado: 'RESERVADO', ordenId: evento.ordenId, contenido: estado.contenido },
+        }
+      }
+      return rechazo
+
+    case 'INICIAR_BUSQUEDA':
+      return estado.estado === 'RESERVADO'
+        ? { ok: true, valor: { estado: 'BUSCANDO', ordenId: evento.ordenId } }
+        : rechazo
+
+    case 'OCUPAR':
+      // El cajon recien apoyado arranca con una devolucion pendiente (RF07).
+      return estado.estado === 'BUSCANDO'
+        ? {
+            ok: true,
+            valor: { estado: 'OCUPADO', contenido: { cajon: evento.cajon, pendingReturns: 1 } },
+          }
+        : rechazo
+
+    case 'INICIAR_DEVOLUCION':
+      return estado.estado === 'RESERVADO'
+        ? {
+            ok: true,
+            valor: { estado: 'DEVOLVIENDO', ordenId: evento.ordenId, contenido: estado.contenido },
+          }
+        : rechazo
+
+    case 'LIBERAR':
+      // Cierre de la devolucion, y tambien la liberacion manual desde la tablet
+      // sobre un slot ocupado: corrige los libros sin mover el robot.
+      return estado.estado === 'DEVOLVIENDO' || estado.estado === 'OCUPADO'
+        ? { ok: true, valor: { estado: 'LIBRE' } }
+        : rechazo
+  }
 }

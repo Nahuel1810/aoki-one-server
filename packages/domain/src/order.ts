@@ -6,7 +6,6 @@
 // salto (PENDING -> DONE directo incluido) sin que nadie se entere. Aca la
 // transicion es una funcion total pura, al mismo nivel que `transicionarSlot`.
 
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 
 /**
@@ -76,5 +75,28 @@ export function transicionarOrden(
   estado: EstadoOrden,
   evento: EventoOrden,
 ): Result<EstadoOrden, ErrorTransicionOrden> {
-  return noImplementado('transicionarOrden', { estado, evento })
+  const rechazo: Result<EstadoOrden, ErrorTransicionOrden> = {
+    ok: false,
+    error: { codigo: 'TRANSICION_INVALIDA', desde: estado, evento: evento.tipo },
+  }
+
+  switch (evento.tipo) {
+    case 'INICIAR':
+      return estado === 'PENDING' ? { ok: true, valor: 'IN_PROGRESS' } : rechazo
+
+    case 'COMPLETAR':
+      // PENDING -> DONE directo se rechaza: el legacy lo aceptaba en silencio.
+      return estado === 'IN_PROGRESS' ? { ok: true, valor: 'DONE' } : rechazo
+
+    case 'FALLAR':
+      return estado === 'IN_PROGRESS' ? { ok: true, valor: 'ERROR' } : rechazo
+
+    case 'REINTENTAR':
+      // El retry replaya la orden completa desde HOMING (RF13).
+      return estado === 'ERROR' ? { ok: true, valor: 'PENDING' } : rechazo
+
+    case 'REHIDRATAR':
+      // Tras un reinicio las IN_PROGRESS vuelven a PENDING y se reencolan (RF15).
+      return estado === 'IN_PROGRESS' ? { ok: true, valor: 'PENDING' } : rechazo
+  }
 }

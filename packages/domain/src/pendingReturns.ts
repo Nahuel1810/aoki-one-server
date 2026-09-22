@@ -9,7 +9,6 @@
 // declara aca: figura en la seccion "RF sin cobertura" del mapeo, ningun test
 // portado la ejercita y entra con la task que escriba su test.
 
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 import type { CajonEnSlot } from './slotStateMachine.js'
 
@@ -32,12 +31,20 @@ export type ResolucionDeManiobra =
 
 /** 1 -> 2. Al ocupar el slot el contador arranca en 1, no en 0. */
 export function incrementarPendingReturns(actual: number): Result<number, ErrorPendingReturns> {
-  return noImplementado('incrementarPendingReturns', { actual })
+  if (!Number.isInteger(actual) || actual < 1) {
+    return { ok: false, error: { codigo: 'PENDING_RETURNS_FUERA_DE_RANGO', actual } }
+  }
+  return { ok: true, valor: actual + 1 }
 }
 
 /** 2 -> 1. Con `actual` menor o igual a 1 es error, no 0. */
 export function decrementarPendingReturns(actual: number): Result<number, ErrorPendingReturns> {
-  return noImplementado('decrementarPendingReturns', { actual })
+  if (!Number.isInteger(actual) || actual < 1) {
+    return { ok: false, error: { codigo: 'PENDING_RETURNS_FUERA_DE_RANGO', actual } }
+  }
+  // No baja de 1: mientras el cajon este apoyado queda al menos una devolucion
+  // pendiente. El contador llega a 0 recien cuando el slot se libera.
+  return { ok: true, valor: Math.max(1, actual - 1) }
 }
 
 /**
@@ -52,5 +59,13 @@ export function decrementarPendingReturns(actual: number): Result<number, ErrorP
 export function resolverPick(
   contenidoDelSlotQueYaTieneElCajon: CajonEnSlot | null,
 ): Result<ResolucionDeManiobra, ErrorPendingReturns> {
-  return noImplementado('resolverPick', { contenidoDelSlotQueYaTieneElCajon })
+  if (contenidoDelSlotQueYaTieneElCajon === null) {
+    return { ok: true, valor: { tipo: 'EJECUTAR_MANIOBRA' } }
+  }
+  // El cajon ya esta apoyado: no se mueve el robot, se anota una devolucion mas.
+  const incrementado = incrementarPendingReturns(contenidoDelSlotQueYaTieneElCajon.pendingReturns)
+  if (!incrementado.ok) {
+    return incrementado
+  }
+  return { ok: true, valor: { tipo: 'TERMINAR_SIN_MANIOBRA', pendingReturns: incrementado.valor } }
 }

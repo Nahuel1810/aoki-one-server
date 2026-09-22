@@ -4,8 +4,8 @@
 // exclusion, no penalizacion de orden) y solo slots LIBRE, ordenados por
 // cercania.
 
+import { parsearLocationCode } from './locationCode.js'
 import type { ErrorLocationCode, UbicacionParseada } from './locationCode.js'
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 import type { EstadoSlot } from './slotStateMachine.js'
 
@@ -60,5 +60,59 @@ export function rankearSlotsParaPick(
   origen: UbicacionParseada,
   slots: readonly SlotDePickeo[],
 ): Result<readonly SlotRankeado[], ErrorSeleccionSlot> {
-  return noImplementado('rankearSlotsParaPick', { origen, slots })
+  const candidatos: SlotRankeado[] = []
+
+  for (const slot of slots) {
+    const parseado = parsearLocationCode(slot.locationCode)
+    if (!parseado.ok) {
+      return {
+        ok: false,
+        error: {
+          codigo: 'SLOT_CON_CODIGO_INVALIDO',
+          locationCode: slot.locationCode,
+          causa: parseado.error,
+        },
+      }
+    }
+
+    // Exclusion, no penalizacion: el carro no cruza de lado.
+    if (parseado.valor.lado !== origen.lado) {
+      continue
+    }
+    if (slot.estado.estado !== 'LIBRE') {
+      continue
+    }
+
+    candidatos.push({
+      locationCode: parseado.valor.baseCode,
+      ubicacion: parseado.valor,
+      estado: slot.estado,
+    })
+  }
+
+  // Cercania: mismo nivel primero (evita mover el elevador), luego distancia de
+  // nivel, luego distancia de modulo, luego posicion absoluta ascendente.
+  const ordenados = [...candidatos].sort((a, b) => {
+    const mismoNivelA = a.ubicacion.nivel === origen.nivel ? 0 : 1
+    const mismoNivelB = b.ubicacion.nivel === origen.nivel ? 0 : 1
+    if (mismoNivelA !== mismoNivelB) {
+      return mismoNivelA - mismoNivelB
+    }
+
+    const distNivelA = Math.abs(a.ubicacion.nivel - origen.nivel)
+    const distNivelB = Math.abs(b.ubicacion.nivel - origen.nivel)
+    if (distNivelA !== distNivelB) {
+      return distNivelA - distNivelB
+    }
+
+    const distModuloA = Math.abs(a.ubicacion.modulo - origen.modulo)
+    const distModuloB = Math.abs(b.ubicacion.modulo - origen.modulo)
+    if (distModuloA !== distModuloB) {
+      return distModuloA - distModuloB
+    }
+
+    return a.ubicacion.posicion - b.ubicacion.posicion
+  })
+
+  return { ok: true, valor: ordenados }
 }

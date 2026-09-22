@@ -4,7 +4,6 @@
 // no puede cruzar), el nivel al que va el elevador y la posicion que arma el
 // comando del carro.
 
-import { noImplementado } from './noImplementado.js'
 import type { Result } from './result.js'
 
 /**
@@ -106,6 +105,14 @@ export type ErrorLocationCode =
   | { readonly codigo: 'NIVEL_FUERA_DE_RANGO'; readonly letra: string }
 
 /**
+ * Gramatica viva, portada literal del legacy.
+ *
+ * La `A` entre modulo y nivel es un separador LITERAL. El prefijo de estanteria es
+ * codicioso y admite digitos, por eso `3X04AA3` parte en `3X` + `04` y no al reves.
+ */
+const GRAMATICA = /^([A-Z0-9]+)(\d{2})A([A-L])(\d)([TDL])?$/
+
+/**
  * Traduce la letra de nivel a su numero: A=1, B=2, ... L=12.
  *
  * La formula viva es `charCodeAt(letra) - charCodeAt('A') + 1` y el rango es
@@ -119,7 +126,13 @@ export type ErrorLocationCode =
  * el parametro ya tipado el caso negativo seria inexpresable.
  */
 export function nivelDesdeLetra(letra: string): Result<Nivel, ErrorLocationCode> {
-  return noImplementado('nivelDesdeLetra', { letra })
+  const normalizada = letra.trim().toUpperCase()
+  // Formula viva del legacy: charCodeAt - 'A' + 1. Doce niveles exactos.
+  const numero = normalizada.charCodeAt(0) - 'A'.charCodeAt(0) + 1
+  if (normalizada.length !== 1 || numero < 1 || numero > 12) {
+    return { ok: false, error: { codigo: 'NIVEL_FUERA_DE_RANGO', letra } }
+  }
+  return { ok: true, valor: numero as Nivel }
 }
 
 /**
@@ -144,7 +157,54 @@ export function nivelDesdeLetra(letra: string): Result<Nivel, ErrorLocationCode>
  * `robots(site_id, estanteria_code)` del agente, no en el dominio puro.
  */
 export function parsearLocationCode(codigo: string): Result<UbicacionParseada, ErrorLocationCode> {
-  return noImplementado('parsearLocationCode', { codigo })
+  // Normalizacion viva: se aceptan minusculas y espacios alrededor.
+  const normalizado = codigo.trim().toUpperCase()
+  const match = GRAMATICA.exec(normalizado)
+  if (match === null) {
+    return { ok: false, error: { codigo: 'FORMATO_INVALIDO', recibido: codigo } }
+  }
+
+  const [, estanteria, moduloCode, nivelLetra, posicionCruda, sufijoCrudo] = match
+  // La regex ya garantiza que los cinco primeros grupos existen; el sexto es opcional.
+  if (
+    estanteria === undefined ||
+    moduloCode === undefined ||
+    nivelLetra === undefined ||
+    posicionCruda === undefined
+  ) {
+    return { ok: false, error: { codigo: 'FORMATO_INVALIDO', recibido: codigo } }
+  }
+
+  const nivelParseado = nivelDesdeLetra(nivelLetra)
+  if (!nivelParseado.ok) {
+    return nivelParseado
+  }
+
+  const modulo = Number(moduloCode)
+  // Paridad del modulo: par = derecho, impar = izquierdo. El carro no cruza de lado.
+  const esPar = modulo % 2 === 0
+  const sufijo = (sufijoCrudo ?? null) as SufijoAccion | null
+  // El sufijo L se normaliza a D: misma accion, mismo bit.
+  const accion: Accion | null = sufijo === null ? null : sufijo === 'T' ? 'T' : 'D'
+
+  return {
+    ok: true,
+    valor: {
+      codigo: normalizado,
+      baseCode: `${estanteria}${moduloCode}A${nivelLetra}${posicionCruda}`,
+      estanteria,
+      moduloCode,
+      modulo,
+      lado: esPar ? 'RIGHT' : 'LEFT',
+      ladoBit: esPar ? 0 : 1,
+      nivelLetra: nivelLetra as NivelLetra,
+      nivel: nivelParseado.valor,
+      posicion: Number(posicionCruda) as Posicion,
+      sufijo,
+      accion,
+      accionBit: accion === null ? null : accion === 'T' ? 1 : 0,
+    },
+  }
 }
 
 /**
@@ -156,5 +216,5 @@ export function parsearLocationCode(codigo: string): Result<UbicacionParseada, E
  * tambien queda marcado.
  */
 export function tieneSufijoDeAccion(codigo: string): boolean {
-  return noImplementado('tieneSufijoDeAccion', { codigo })
+  return /[TDL]$/i.test(codigo.trim())
 }
