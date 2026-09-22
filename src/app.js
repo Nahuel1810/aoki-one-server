@@ -1,4 +1,5 @@
 const express = require("express");
+const fs = require("node:fs");
 const path = require("node:path");
 const YAML = require("yamljs");
 const swaggerUi = require("swagger-ui-express");
@@ -35,12 +36,30 @@ function createApp(options = {}) {
     app.use(express.json());
   }
 
+  const webDir = path.join(__dirname, "../public-dist");
+  const webIndex = path.join(webDir, "index.html");
+  const hasWebBuild = options.enableStatic !== false && fs.existsSync(webIndex);
+
   if (options.enableStatic !== false) {
-    const publicDir = path.join(__dirname, "../public");
-    app.use(express.static(publicDir));
-    app.get("/metricas", (req, res) => {
-      res.sendFile(path.join(publicDir, "metricas.html"));
-    });
+    // Front nuevo (packages/web). Build estatico: lo sirve este mismo proceso,
+    // sin agregar un segundo servidor en la PC de la sucursal.
+    if (hasWebBuild) {
+      app.use(express.static(webDir));
+    } else {
+      (options.logger || console).warn?.(
+        "[web] No hay build del front en public-dist. Ejecutar: npm run build:web"
+      );
+    }
+
+    // Front anterior, accesible durante la validacion del nuevo.
+    // Se retira cuando el front nuevo pase una jornada contra el robot real.
+    const legacyDir = path.join(__dirname, "../public");
+    if (fs.existsSync(legacyDir)) {
+      app.use("/legacy", express.static(legacyDir));
+      app.get("/legacy/metricas", (req, res) => {
+        res.sendFile(path.join(legacyDir, "metricas.html"));
+      });
+    }
   }
 
   const logger = options.logger || console;
@@ -171,6 +190,25 @@ function createApp(options = {}) {
       mode: connectionService.simulate ? "simulation" : "modbus",
     });
   });
+
+  // El front usa rutas del navegador (/dispositivos, /metricas): cualquier GET
+  // que no sea de la API ni un archivo existente devuelve el index de la SPA.
+  // Va al final, despues de montar /api, /health y /api-docs.
+  if (hasWebBuild) {
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        next();
+        return;
+      }
+
+      if (/^\/(api|health|api-docs|legacy)(\/|$)/.test(req.path)) {
+        next();
+        return;
+      }
+
+      res.sendFile(webIndex);
+    });
+  }
 
   return {
     app,
