@@ -26,7 +26,7 @@
     "format:check": "prettier --check .",
     "test:packages": "vitest run",
     "test:packages:watch": "vitest",
-    "clean": "tsc -b --clean",
+    "clean": "npm run clean --workspaces --if-present",
     "test:packages:coverage": "vitest run --coverage"
   },
   "dependencies": {
