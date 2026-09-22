@@ -14,6 +14,9 @@ export default defineConfig({
   },
   test: {
     include: ['packages/{domain,agent,server}/src/**/*.test.ts'],
+    // La suite de aceptacion (los 55 portados) corre aparte: esta roja por diseño hasta
+    // que T03+ implemente el contrato, y este gate es bloqueante.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/*.aceptacion.test.ts'],
     environment: 'node',
     globals: false,
     coverage: {

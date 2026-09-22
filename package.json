@@ -26,6 +26,8 @@
     "format:check": "prettier --check .",
     "test:packages": "vitest run",
     "test:packages:watch": "vitest",
+    "test:aceptacion": "vitest run --config vitest.aceptacion.mts",
+    "test:aceptacion:watch": "vitest --config vitest.aceptacion.mts",
     "clean": "npm run clean --workspaces --if-present",
     "test:packages:coverage": "vitest run --coverage"
   },

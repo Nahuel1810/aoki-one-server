@@ -46,6 +46,15 @@ jobs:
       - name: Tests de los paquetes TS (vitest + cobertura)
         run: npm run test:packages:coverage
 
+      # Suite de aceptacion: los 55 tests portados del servidor legacy (T02). Estan ROJOS
+      # a proposito hasta que T03-T21 implementen el contrato, asi que no bloquean. El paso
+      # existe para que el avance se vea en cada push: cuantos pasan de los 55.
+      # SACAR el continue-on-error cuando la suite llegue a verde, y fusionarla con la de
+      # arriba: a partir de ahi tiene que bloquear.
+      - name: Suite de aceptacion (roja por diseño hasta T21)
+        run: npm run test:aceptacion
+        continue-on-error: true
+
       # Suite legacy (55 tests en node --test sobre src/ y tests/). Es la red de seguridad
       # del servidor actual: tiene que seguir verde durante toda la reescritura.
       - name: Tests legacy (node --test)
