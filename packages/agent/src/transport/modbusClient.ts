@@ -23,7 +23,7 @@ import type { TipoDispositivo } from '@aoki-one/domain'
 export type ClaveDeDispositivo = string
 
 export function claveDeDispositivo(robotId: string, tipo: TipoDispositivo): ClaveDeDispositivo {
-  return noImplementado('claveDeDispositivo', { robotId, tipo })
+  return robotId + ':' + tipo
 }
 
 /** Dispositivo tal como esta dado de alta: identidad mas datos de conexion. */

@@ -7,7 +7,6 @@
 // dormir de verdad en la suite: el test legacy de ELEVADOR duerme ~4,5 s reales
 // porque el sleep esta cableado adentro.
 
-import { noImplementado } from '@aoki-one/domain'
 
 export interface Reloj {
   /** Instante actual en epoch ms. */
@@ -18,5 +17,8 @@ export interface Reloj {
 
 /** Reloj real: `Date.now()` y `setTimeout`. Solo lo arma la composicion. */
 export function crearRelojDelSistema(): Reloj {
-  return noImplementado('crearRelojDelSistema')
+  return {
+    ahoraMs: () => Date.now(),
+    dormir: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  }
 }

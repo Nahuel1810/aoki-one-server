@@ -11,7 +11,6 @@
 // igual) y se reemplaza por esta union, para que `esReintentable` sea una
 // funcion total que el compilador obliga a cubrir caso por caso.
 
-import { noImplementado } from '@aoki-one/domain'
 import type { TipoDispositivo } from '@aoki-one/domain'
 
 export type FalloDeEjecucion =
@@ -77,15 +76,156 @@ export type FalloDeEjecucion =
  * contrario de lo que pide RF19.
  */
 export function clasificarError(error: unknown): FalloDeEjecucion {
-  return noImplementado('clasificarError', { error })
+  if (esErrorDeConectividad(error)) {
+    return { tipo: 'TRANSPORTE', codigo: codigoDeError(error), mensaje: mensajeDeError(error) }
+  }
+
+  const mensaje = mensajeDeError(error)
+  if (esErrorDeProgramacion(error)) {
+    return { tipo: 'PROGRAMACION', mensaje }
+  }
+
+  // Las excepciones de aplicacion las tira el PLC por el propio protocolo Modbus:
+  // no es un problema de red y reintentar no cambia nada.
+  if (/modbus exception|illegal (data|function)|gateway/i.test(mensaje)) {
+    return { tipo: 'MODBUS_APLICACION', mensaje }
+  }
+
+  // Todo lo demas es bug nuestro: falla rapido y ruidoso en vez de reintentar.
+  return { tipo: 'PROGRAMACION', mensaje }
 }
 
 /** Atajo de `clasificarError(error).tipo === 'TRANSPORTE'`, que es lo que el test legacy afirma. */
 export function esErrorDeConectividad(error: unknown): boolean {
-  return noImplementado('esErrorDeConectividad', { error })
+  if (error === null || error === undefined) {
+    return false
+  }
+
+  const like = error as { connectivity?: unknown; code?: unknown; errno?: unknown }
+  if (like.connectivity === true) {
+    return true
+  }
+
+  const codigo = like.code
+  if (typeof codigo === 'string' && CODIGOS_DE_TRANSPORTE.has(codigo)) {
+    return true
+  }
+  const errno = like.errno
+  if (errno !== undefined && errno !== null && CODIGOS_DE_TRANSPORTE.has(String(errno))) {
+    return true
+  }
+
+  // DEFECTO DEL LEGACY que se arregla aca: con 'socket' y 'tcp' entre las frases,
+  // un TypeError como "Cannot read properties of undefined (reading 'socket')"
+  // se clasificaba como conectividad y entraba al loop de reintentos. La frase
+  // sola no alcanza: un error de programacion es de programacion aunque hable de
+  // sockets, y RF19 pide que falle rapido.
+  if (esErrorDeProgramacion(error)) {
+    return false
+  }
+
+  const mensaje = mensajeDeError(error).toLowerCase()
+  return FRASES_DE_TRANSPORTE.some((frase) => mensaje.includes(frase))
 }
 
 /** Funcion total sobre la union: el compilador obliga a decidir cada variante. */
 export function esReintentable(fallo: FalloDeEjecucion): boolean {
-  return noImplementado('esReintentable', { fallo })
+  switch (fallo.tipo) {
+    case 'TRANSPORTE':
+      // Lo unico reintentable: el cable, el socket, la red.
+      return true
+    case 'PLC_ERROR':
+      // El 99 ("No logro recuperarse") no se reintenta; el resto del rango si.
+      return !fallo.fatal
+    case 'PLC_ESTADO_INESPERADO':
+      // El PLC devolvio un valor que no es el esperado todavia: reintentar dentro
+      // del mismo paso es justamente como se espera la confirmacion.
+      return true
+    case 'DISPOSITIVO_NO_REGISTRADO':
+    case 'RESET_INCOMPLETO':
+    case 'MODBUS_APLICACION':
+    case 'PROGRAMACION':
+      return false
+  }
 }
+
+/**
+ * Los errores nativos de esta familia los tira el motor de JS ante un bug
+ * nuestro, nunca la red.
+ */
+function esErrorDeProgramacion(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof RangeError
+  )
+}
+
+/** Mensaje legible de cualquier cosa que haya llegado por el canal de error. */
+function mensajeDeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  if (typeof error === 'object' && error !== null) {
+    // modbus-serial propaga objetos planos con `message` y sin prototipo Error.
+    const mensaje = (error as { message?: unknown }).message
+    if (typeof mensaje === 'string') {
+      return mensaje
+    }
+  }
+  return String(error)
+}
+
+/** Codigo de sistema del error, cuando lo trae. */
+function codigoDeError(error: unknown): string | null {
+  if (error === null || error === undefined) {
+    return null
+  }
+  const codigo = (error as { code?: unknown }).code
+  return typeof codigo === 'string' ? codigo : null
+}
+
+/**
+ * Codigos de sistema que son de transporte, portados literal del legacy.
+ */
+const CODIGOS_DE_TRANSPORTE: ReadonlySet<string> = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ENOTFOUND',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ESOCKETTIMEDOUT',
+  'ERR_SOCKET_CLOSED',
+  'EAI_AGAIN',
+  'ENOTCONN',
+])
+
+/**
+ * Frases que delatan un problema de transporte cuando el error no trae codigo.
+ * Portadas literal: modbus-serial no siempre propaga `code`.
+ */
+const FRASES_DE_TRANSPORTE: readonly string[] = [
+  'timeout',
+  'timed out',
+  'econnreset',
+  'connection refused',
+  'port not open',
+  'broken pipe',
+  'etimedout',
+  'econnrefused',
+  'socket',
+  'network unreachable',
+  'host unreachable',
+  'no connection',
+  'connection lost',
+  'connection closed',
+  'write after end',
+  'socket hang up',
+  'tcp',
+]

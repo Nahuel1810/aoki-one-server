@@ -5,11 +5,11 @@
 // verificar `messageOut = 0`. El paso NO cierra por envio: cierra por
 // confirmacion mas reset verificado.
 
-import { noImplementado } from '@aoki-one/domain'
+import { decodificarRespuesta } from '@aoki-one/domain'
 import type { Result, RespuestaPlc, TipoDispositivo } from '@aoki-one/domain'
 
-import { noImplementadoAsync } from '../noImplementadoAsync.js'
 import type { Reloj } from '../reloj.js'
+import { clasificarError } from './errorClassification.js'
 import type { FalloDeEjecucion } from './errorClassification.js'
 import type { ModbusClient } from './modbusClient.js'
 
@@ -124,7 +124,19 @@ export type ErrorDeComandoDeCarro = {
 export function partirComandoDeCarro(
   valor: number,
 ): Result<ComandoPartido, ErrorDeComandoDeCarro> {
-  return noImplementado('partirComandoDeCarro', { valor })
+  if (!Number.isFinite(valor)) {
+    return { ok: false, error: { codigo: 'COMANDO_DE_CARRO_INVALIDO', valor } }
+  }
+
+  // Split DECIMAL a 5 digitos, no binario: 41000 -> alto 4, bajo 1000.
+  // NO es `v >> 16` / `v & 0xffff`. Portado literal de splitCarroCommandValue.
+  // El slice(-5) TRUNCA en silencio los valores de mas de 5 digitos, igual que el
+  // legacy: conservar o no ese truncado es decision de planta y se decide con su test.
+  const digitos = String(Math.trunc(valor)).padStart(5, '0').slice(-5)
+  return {
+    ok: true,
+    valor: { alto: Number(digitos[0]), bajo: Number(digitos.slice(1)) },
+  }
 }
 
 /**
@@ -162,11 +174,136 @@ export interface DependenciasDeHandshake {
  * `PLC_ERROR` y un valor desconocido por `PLC_ESTADO_INESPERADO`, siempre por el
  * canal de error. Ver `RespuestaUtilPlc`.
  */
-export function ejecutarComandoDePaso(
+export async function ejecutarComandoDePaso(
   dependencias: DependenciasDeHandshake,
   pedido: PedidoDeComando,
 ): Promise<Result<RespuestaUtilPlc, FalloDeEjecucion>> {
-  return noImplementadoAsync('ejecutarComandoDePaso', { dependencias, pedido })
+  const { dispositivo, tiempos, reloj } = dependencias
+
+  // 1. Escribir messageIn. El CARRO va partido en dos registros consecutivos.
+  const escritura = await escribirComando(dependencias, pedido.comando)
+  if (!escritura.ok) {
+    return escritura
+  }
+
+  // 2. Pollear messageOut hasta ver el codigo esperado. El paso NO avanza por
+  //    envio: avanza por confirmacion (RF12).
+  let ultimoValor = 0
+  let confirmado = false
+  for (let intento = 0; intento < tiempos.maxIntentosAck; intento += 1) {
+    const leido = await leerMessageOut(dependencias)
+    if (!leido.ok) {
+      return leido
+    }
+    ultimoValor = leido.valor
+    if (coincide(ultimoValor, pedido.respuestasEsperadas)) {
+      confirmado = true
+      break
+    }
+    await reloj.dormir(tiempos.intervaloAckMs)
+  }
+
+  if (!confirmado) {
+    return {
+      ok: false,
+      error: {
+        tipo: 'PLC_ESTADO_INESPERADO',
+        valor: ultimoValor,
+        mensaje: 'El PLC no confirmo el paso dentro del presupuesto de intentos',
+      },
+    }
+  }
+
+  const decodificada = decodificarRespuesta(ultimoValor, dispositivo.tipo)
+  if (decodificada.kind === 'ERROR') {
+    return {
+      ok: false,
+      error: {
+        tipo: 'PLC_ERROR',
+        codigoError: decodificada.codigoError,
+        mensaje: decodificada.mensaje,
+        fatal: decodificada.fatal,
+      },
+    }
+  }
+  if (decodificada.kind === 'DESCONOCIDO') {
+    return {
+      ok: false,
+      error: {
+        tipo: 'PLC_ESTADO_INESPERADO',
+        valor: decodificada.valor,
+        mensaje: 'El PLC respondio un valor fuera del protocolo',
+      },
+    }
+  }
+
+  // 3. Resetear messageIn y verificar que messageOut vuelva a 0. Sin esto el paso
+  //    siguiente arrancaria con el registro sucio.
+  const reset = await resetearMessageIn(dependencias)
+  if (!reset.ok) {
+    return reset
+  }
+
+  return { ok: true, valor: decodificada }
+}
+
+/** Escribe el comando en messageIn, partido si el dispositivo es el CARRO. */
+async function escribirComando(
+  dependencias: DependenciasDeHandshake,
+  comando: number,
+): Promise<Result<void, FalloDeEjecucion>> {
+  const { dispositivo } = dependencias
+  const { cliente, mapaDeRegistros } = dispositivo
+
+  try {
+    if (dispositivo.tipo === 'CARRO') {
+      const partido = partirComandoDeCarro(comando)
+      if (!partido.ok) {
+        return {
+          ok: false,
+          error: { tipo: 'PROGRAMACION', mensaje: 'Comando de carro invalido' },
+        }
+      }
+      await cliente.escribirRegistro(mapaDeRegistros.messageIn, partido.valor.alto)
+      await cliente.escribirRegistro(mapaDeRegistros.messageIn + 1, partido.valor.bajo)
+    } else {
+      await cliente.escribirRegistro(mapaDeRegistros.messageIn, comando)
+    }
+    return { ok: true, valor: undefined }
+  } catch (error) {
+    return { ok: false, error: clasificarError(error) }
+  }
+}
+
+/** messageOut se lee como input register (FC04), no como holding. */
+async function leerMessageOut(
+  dependencias: DependenciasDeHandshake,
+): Promise<Result<number, FalloDeEjecucion>> {
+  try {
+    const registros = await dependencias.dispositivo.cliente.leerRegistrosDeEntrada(
+      dependencias.dispositivo.mapaDeRegistros.messageOut,
+      1,
+    )
+    return { ok: true, valor: registros[0] ?? 0 }
+  } catch (error) {
+    return { ok: false, error: clasificarError(error) }
+  }
+}
+
+/**
+ * Comodines de rango del legacy: `1##` cubre 100..199 y `2##` cubre 200..299,
+ * ademas de los numeros exactos.
+ */
+function coincide(valor: number, esperadas: readonly RespuestaEsperada[]): boolean {
+  return esperadas.some((esperada) => {
+    if (typeof esperada === 'number') {
+      return valor === esperada
+    }
+    if (esperada === '1##') {
+      return valor >= 100 && valor <= 199
+    }
+    return valor >= 200 && valor <= 299
+  })
 }
 
 /** Lectura cruda de los registros de un dispositivo, para diagnostico. */
@@ -183,10 +320,31 @@ export interface RegistrosDeDispositivo {
  * `messageIn` se relee con holding registers (2 registros en el CARRO, 1 en el
  * ELEVADOR) y `messageOut` con input registers.
  */
-export function leerRegistrosDeDispositivo(
+export async function leerRegistrosDeDispositivo(
   dependencias: DependenciasDeHandshake,
 ): Promise<Result<RegistrosDeDispositivo, FalloDeEjecucion>> {
-  return noImplementadoAsync('leerRegistrosDeDispositivo', { dependencias })
+  const { dispositivo } = dependencias
+  const { cliente, mapaDeRegistros } = dispositivo
+  const esCarro = dispositivo.tipo === 'CARRO'
+
+  try {
+    // messageIn se lee como holding register; messageOut como input register.
+    const entrada = await cliente.leerRegistrosDeRetencion(
+      mapaDeRegistros.messageIn,
+      esCarro ? 2 : 1,
+    )
+    const salida = await cliente.leerRegistrosDeEntrada(mapaDeRegistros.messageOut, 1)
+    return {
+      ok: true,
+      valor: {
+        messageIn1: entrada[0] ?? 0,
+        messageIn2: esCarro ? (entrada[1] ?? 0) : null,
+        messageOut: salida[0] ?? 0,
+      },
+    }
+  } catch (error) {
+    return { ok: false, error: clasificarError(error) }
+  }
 }
 
 /**
@@ -197,8 +355,36 @@ export function leerRegistrosDeDispositivo(
  * el reintento con el comando anterior colgado. Recorrer los dispositivos de un
  * robot es trabajo del puerto de transporte, que es el que los resuelve.
  */
-export function resetearMessageIn(
+export async function resetearMessageIn(
   dependencias: DependenciasDeHandshake,
 ): Promise<Result<void, FalloDeEjecucion>> {
-  return noImplementadoAsync('resetearMessageIn', { dependencias })
+  const { dispositivo, tiempos, reloj } = dependencias
+  const { cliente, mapaDeRegistros } = dispositivo
+
+  try {
+    await cliente.escribirRegistro(mapaDeRegistros.messageIn, 0)
+    if (dispositivo.tipo === 'CARRO') {
+      // El CARRO ocupa dos registros: resetear uno solo deja el otro sucio.
+      await cliente.escribirRegistro(mapaDeRegistros.messageIn + 1, 0)
+    }
+  } catch (error) {
+    return { ok: false, error: clasificarError(error) }
+  }
+
+  // El reset no se da por hecho al escribir: se verifica que messageOut vuelva a 0.
+  for (let intento = 0; intento < tiempos.maxIntentosReset; intento += 1) {
+    const leido = await leerMessageOut(dependencias)
+    if (!leido.ok) {
+      return leido
+    }
+    if (leido.valor === 0) {
+      return { ok: true, valor: undefined }
+    }
+    await reloj.dormir(tiempos.intervaloResetMs)
+  }
+
+  return {
+    ok: false,
+    error: { tipo: 'RESET_INCOMPLETO', mensaje: 'messageOut no volvio a 0 tras el reset' },
+  }
 }

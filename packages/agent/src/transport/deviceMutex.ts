@@ -8,7 +8,6 @@
 //
 // Es POR DISPOSITIVO: dos dispositivos distintos corren en paralelo.
 
-import { noImplementado } from '@aoki-one/domain'
 import type { ClaveDeDispositivo } from './modbusClient.js'
 
 /**
@@ -41,5 +40,59 @@ export interface DeviceMutex {
 }
 
 export function crearDeviceMutex(): DeviceMutex {
-  return noImplementado('crearDeviceMutex')
+  // Una cadena de promesas por dispositivo: cada operacion espera a la anterior.
+  // Dos dispositivos distintos tienen cadenas distintas y corren en paralelo.
+  const colas = new Map<ClaveDeDispositivo, Promise<unknown>>()
+  const tomados = new Set<ClaveDeDispositivo>()
+
+  async function ejecutar<T>(clave: ClaveDeDispositivo, operacion: () => Promise<T>): Promise<T> {
+    const anterior = colas.get(clave) ?? Promise.resolve()
+    const propia = anterior.then(
+      async () => {
+        tomados.add(clave)
+        try {
+          return await operacion()
+        } finally {
+          tomados.delete(clave)
+        }
+      },
+      async () => {
+        // Un fallo anterior no rompe la cadena: el turno siguiente igual corre.
+        tomados.add(clave)
+        try {
+          return await operacion()
+        } finally {
+          tomados.delete(clave)
+        }
+      },
+    )
+    colas.set(
+      clave,
+      propia.catch(() => undefined),
+    )
+    return propia
+  }
+
+  async function intentarEjecutar<T>(
+    clave: ClaveDeDispositivo,
+    operacion: () => Promise<T>,
+  ): Promise<ResultadoDeIntento<T>> {
+    // Sin espera: si el dispositivo esta ocupado se cede el turno. Es lo que
+    // permite que el monitor de conectividad le deje el socket al orquestador.
+    if (tomados.has(clave)) {
+      return { ejecutado: false }
+    }
+    const valor = await ejecutar(clave, operacion)
+    return { ejecutado: true, valor }
+  }
+
+  return {
+    ejecutar,
+    intentarEjecutar,
+    estaTomado: (clave) => tomados.has(clave),
+    liberarTodo: () => {
+      colas.clear()
+      tomados.clear()
+    },
+  }
 }
