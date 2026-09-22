@@ -9,9 +9,9 @@
 // servidor: admite ordenes manuales sin enlace (RF35) y una re-entrega del
 // servidor tras un lease vencido (RF28) no debe crear una segunda orden.
 
+import { parsearLocationCode, tieneSufijoDeAccion } from '@aoki-one/domain'
 import type { ErrorLocationCode, Result, TipoOrden } from '@aoki-one/domain'
 
-import { noImplementadoAsync } from '../noImplementadoAsync.js'
 import type { Orden, OrigenDeOrden } from '../persistence/index.js'
 import type { DependenciasDelOrquestador } from './ports.js'
 
@@ -41,9 +41,89 @@ export type ErrorDeAdmision =
   /** No hay fila en `robots` para esa estanteria: ya no existe el fallback identidad. */
   | { readonly codigo: 'ROBOT_NO_REGISTRADO'; readonly estanteriaCode: string }
 
-export function admitirOrden(
+export async function admitirOrden(
   dependencias: DependenciasDelOrquestador,
   pedido: PedidoDeAltaDeOrden,
 ): Promise<Result<ResultadoDeAdmision, ErrorDeAdmision>> {
-  return noImplementadoAsync('admitirOrden', { dependencias, pedido })
+  const { repositorios, siteId, generarId, reloj } = dependencias
+
+  // La accion se deriva del tipo de orden (PICK/PUT), nunca viaja en la ubicacion.
+  if (tieneSufijoDeAccion(pedido.locationCode)) {
+    return {
+      ok: false,
+      error: { codigo: 'LOCATION_CODE_CON_ACCION', recibido: pedido.locationCode },
+    }
+  }
+
+  const ubicacion = parsearLocationCode(pedido.locationCode)
+  if (!ubicacion.ok) {
+    return {
+      ok: false,
+      error: {
+        codigo: 'LOCATION_CODE_INVALIDO',
+        recibido: pedido.locationCode,
+        causa: ubicacion.error,
+      },
+    }
+  }
+
+  // El robot sale de la tabla, no del mapa hardcodeado del legacy.
+  let robotId = pedido.robotId
+  if (robotId === null) {
+    const robot = await repositorios.robots.buscarPorEstanteria(siteId, ubicacion.valor.estanteria)
+    if (robot === undefined) {
+      return {
+        ok: false,
+        error: { codigo: 'ROBOT_NO_REGISTRADO', estanteriaCode: ubicacion.valor.estanteria },
+      }
+    }
+    robotId = robot.id
+  }
+
+  // Dedupe por (siteId, externalOrderId). Un reenvio devuelve la que ya existe.
+  if (pedido.externalOrderId !== null) {
+    const existente = await repositorios.ordenes.buscarPorExternalOrderId(
+      siteId,
+      pedido.externalOrderId,
+    )
+    if (existente !== undefined) {
+      return { ok: true, valor: { tipo: 'YA_EXISTIA', orden: existente } }
+    }
+  }
+
+  const orden: Orden = {
+    id: generarId(),
+    siteId,
+    robotId,
+    externalOrderId: pedido.externalOrderId,
+    tipo: pedido.tipo,
+    origen: pedido.origen,
+    estado: 'PENDING',
+    locationCode: ubicacion.valor.baseCode,
+    targetLocation: pedido.targetLocation,
+    slotLocationCode: null,
+    currentStepIndex: 0,
+    waitingForSlot: false,
+    errorReason: null,
+    creadaEn: reloj.ahoraMs(),
+    iniciadaEn: null,
+    finalizadaEn: null,
+  }
+
+  const creada = await repositorios.ordenes.crear(orden)
+  if (!creada.ok) {
+    // El indice unico gano una carrera: la orden ya existe y se devuelve esa.
+    if (pedido.externalOrderId !== null) {
+      const existente = await repositorios.ordenes.buscarPorExternalOrderId(
+        siteId,
+        pedido.externalOrderId,
+      )
+      if (existente !== undefined) {
+        return { ok: true, valor: { tipo: 'YA_EXISTIA', orden: existente } }
+      }
+    }
+    throw new Error('no se pudo crear la orden y tampoco existe una previa')
+  }
+
+  return { ok: true, valor: { tipo: 'CREADA', orden: creada.valor } }
 }

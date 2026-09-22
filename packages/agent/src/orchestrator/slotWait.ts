@@ -13,6 +13,8 @@
 // La espera es por lado: una orden esperando el lado izquierdo no bloquea a una
 // del derecho.
 
+import { parsearLocationCode, rankearSlotsParaPick } from '@aoki-one/domain'
+import { resolverDestinoDePut } from './putTargetResolution.js'
 import type {
   ErrorLocationCode,
   ErrorSeleccionSlot,
@@ -21,7 +23,6 @@ import type {
   Result,
 } from '@aoki-one/domain'
 
-import { noImplementadoAsync } from '../noImplementadoAsync.js'
 import type { Orden } from '../persistence/index.js'
 import type { ErrorDeDestinoDePut } from './putTargetResolution.js'
 import type { DependenciasDelOrquestador } from './ports.js'
@@ -58,9 +59,93 @@ export type ErrorDeResolucionDeSlot =
   /** Solo lo genuinamente invalido de un PUT: un slot tomado sale por EN_ESPERA. */
   | { readonly codigo: 'DESTINO_DE_PUT_INVALIDO'; readonly causa: ErrorDeDestinoDePut }
 
-export function resolverSlotDeOrden(
+export async function resolverSlotDeOrden(
   dependencias: DependenciasDelOrquestador,
   orden: Orden,
 ): Promise<Result<ResolucionDeSlot, ErrorDeResolucionDeSlot>> {
-  return noImplementadoAsync('resolverSlotDeOrden', { dependencias, orden })
+  const { repositorios } = dependencias
+
+  const origen = parsearLocationCode(orden.locationCode)
+  if (!origen.ok) {
+    return {
+      ok: false,
+      error: {
+        codigo: 'LOCATION_CODE_INVALIDO',
+        recibido: orden.locationCode,
+        causa: origen.error,
+      },
+    }
+  }
+
+  const zona = await repositorios.slots.listarPorRobot(orden.robotId)
+
+  if (orden.tipo === 'PUT') {
+    // Para un PUT el locationCode ES el slot del que sale el cajon.
+    const slot = zona.find((candidato) => candidato.locationCode === origen.valor.baseCode)
+    if (slot === undefined) {
+      return {
+        ok: true,
+        valor: {
+          tipo: 'EN_ESPERA',
+          lado: origen.valor.lado,
+          motivo: {
+            tipo: 'SLOT_DE_PUT_NO_DISPONIBLE',
+            slotLocationCode: origen.valor.baseCode,
+            estado: 'ERROR',
+          },
+        },
+      }
+    }
+
+    const destino = resolverDestinoDePut({
+      slotLocationCode: slot.locationCode,
+      estadoDelSlot: slot.estado,
+      targetLocationPedido: orden.targetLocation,
+    })
+    if (!destino.ok) {
+      return { ok: false, error: { codigo: 'DESTINO_DE_PUT_INVALIDO', causa: destino.error } }
+    }
+
+    if (destino.valor.tipo === 'ESPERAR_SLOT') {
+      return {
+        ok: true,
+        valor: {
+          tipo: 'EN_ESPERA',
+          lado: origen.valor.lado,
+          motivo: {
+            tipo: 'SLOT_DE_PUT_NO_DISPONIBLE',
+            slotLocationCode: slot.locationCode,
+            estado: destino.valor.estado,
+          },
+        },
+      }
+    }
+
+    return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: slot.locationCode } }
+  }
+
+  // PICK: el slot libre mas cercano del MISMO LADO. El ranking es dominio puro.
+  const ranking = rankearSlotsParaPick(
+    origen.valor,
+    zona.map((slot) => ({ locationCode: slot.locationCode, estado: slot.estado })),
+  )
+  if (!ranking.ok) {
+    return { ok: false, error: { codigo: 'SELECCION_INVALIDA', causa: ranking.error } }
+  }
+
+  const ganador = ranking.valor[0]
+  if (ganador === undefined) {
+    // No se reencola: la orden conserva su creadaEn y con eso su lugar en la cola.
+    // El legacy hacia clearActive + enqueue y la mandaba al final cada vez.
+    return {
+      ok: true,
+      valor: {
+        tipo: 'EN_ESPERA',
+        lado: origen.valor.lado,
+        motivo: { tipo: 'SIN_SLOT_LIBRE' },
+      },
+    }
+  }
+
+  return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: ganador.locationCode } }
 }

@@ -10,10 +10,10 @@
 // Es el cambio de contrato mas importante del grupo: el legacy llama `blockSlot`
 // y deja el slot inutilizable para siempre, porque el retry no lo desbloquea.
 
-import { noImplementado } from '@aoki-one/domain'
+import { esReintentable } from '../transport/errorClassification.js'
+import { proximoBackoffMs } from './retryPolicy.js'
 import type { PasoDeOrden, Result } from '@aoki-one/domain'
 
-import { noImplementadoAsync } from '../noImplementadoAsync.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
 import type { PedidoDeComando, RespuestaUtilPlc } from '../transport/stepHandshake.js'
 import type { DependenciasDePaso } from './ports.js'
@@ -36,8 +36,13 @@ export interface ContextoDePaso {
  * solo que mandar y con que respuesta se da por cerrado.
  */
 export function pedidoDeComandoDePaso(paso: PasoDeOrden): PedidoDeComando {
-  return noImplementado('pedidoDeComandoDePaso', { paso })
+  // El comando del carro viaja como numero; el del elevador ya lo es.
+  const comando = typeof paso.comando === 'number' ? paso.comando : paso.comando.codigo
+  // Todo paso espera el 100 (OK). El rango 1## cubre los errores, que el
+  // decodificador convierte en FalloDeEjecucion.
+  return { comando, respuestasEsperadas: [100, '1##'] }
 }
+
 
 export interface PasoEjecutado {
   /** Un paso del camino feliz consume exactamente 1 intento. */
@@ -63,9 +68,53 @@ export type ErrorDeEjecucionDePaso =
  * intentos es por ahora la unica salida: el corte por deadline entra con su test
  * (ver `PoliticaDeReintentos`).
  */
-export function ejecutarPasoConReintentos(
+export async function ejecutarPasoConReintentos(
   dependencias: DependenciasDePaso,
   contexto: ContextoDePaso,
 ): Promise<Result<PasoEjecutado, ErrorDeEjecucionDePaso>> {
-  return noImplementadoAsync('ejecutarPasoConReintentos', { dependencias, contexto })
+  const { transporte, reloj, politica } = dependencias
+  const pedido = pedidoDeComandoDePaso(contexto.paso)
+
+  let intentos = 0
+  let ultimoFallo: FalloDeEjecucion | undefined
+
+  while (intentos < politica.maxIntentos) {
+    intentos += 1
+
+    const resultado = await transporte.ejecutarComandoDePaso(
+      contexto.robotId,
+      contexto.paso.dispositivo,
+      pedido,
+    )
+
+    if (resultado.ok) {
+      return { ok: true, valor: { intentos, respuesta: resultado.valor } }
+    }
+
+    ultimoFallo = resultado.error
+
+    // El 99 del PLC corta en el primer intento: "No logro recuperarse" significa
+    // que el propio PLC ya agoto su recuperacion, y reintentar solo demora el
+    // aviso al operario.
+    if (!esReintentable(resultado.error)) {
+      return { ok: false, error: { codigo: 'FALLO_FATAL', intentos, fallo: resultado.error } }
+    }
+
+    if (intentos < politica.maxIntentos) {
+      await reloj.dormir(proximoBackoffMs(intentos, politica.baseBackoffMs))
+    }
+  }
+
+  return {
+    ok: false,
+    error: {
+      codigo: 'REINTENTOS_AGOTADOS',
+      intentos,
+      // Solo se llega aca despues de al menos un fallo reintentable.
+      ultimoFallo: ultimoFallo ?? {
+        tipo: 'PROGRAMACION',
+        mensaje: 'se agotaron los reintentos sin registrar ningun fallo',
+      },
+    },
+  }
 }

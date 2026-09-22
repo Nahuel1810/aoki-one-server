@@ -21,7 +21,6 @@
 // transitorio del slot, no un defecto del pedido. En el canal de error queda solo
 // lo que ninguna espera arregla.
 
-import { noImplementado } from '@aoki-one/domain'
 import type { EstadoSlot, NombreEstadoSlot, Result } from '@aoki-one/domain'
 
 export interface PedidoDeDestinoDePut {
@@ -69,5 +68,42 @@ export type ErrorDeDestinoDePut = {
 export function resolverDestinoDePut(
   pedido: PedidoDeDestinoDePut,
 ): Result<ResolucionDeDestinoDePut, ErrorDeDestinoDePut> {
-  return noImplementado('resolverDestinoDePut', { pedido })
+  const { estadoDelSlot, slotLocationCode, targetLocationPedido } = pedido
+
+  // Slot CON cajon en libros: el destino sale del cajon y se IGNORA lo pedido.
+  // El legacy nunca lee ubicacionDeOrigen: hace `target || source`, y para un PUT
+  // `source` es el propio slot, o sea que sin targetLocation devolvia el cajon al
+  // lugar donde ya estaba.
+  if (estadoDelSlot.estado === 'OCUPADO') {
+    return {
+      ok: true,
+      valor: {
+        tipo: 'DESTINO_RESUELTO',
+        destino: {
+          locationCode: estadoDelSlot.contenido.cajon.ubicacionDeOrigen,
+          resueltoDesde: 'CAJON_EN_LIBROS',
+        },
+      },
+    }
+  }
+
+  // Slot VACIO en libros: devolucion manual fuera-de-libros. El destino es
+  // obligatorio; sin el la orden se rechaza.
+  if (estadoDelSlot.estado === 'LIBRE') {
+    if (targetLocationPedido === null || targetLocationPedido.trim() === '') {
+      return { ok: false, error: { codigo: 'TARGET_LOCATION_REQUERIDO', slotLocationCode } }
+    }
+    return {
+      ok: true,
+      valor: {
+        tipo: 'DESTINO_RESUELTO',
+        destino: { locationCode: targetLocationPedido, resueltoDesde: 'PEDIDO' },
+      },
+    }
+  }
+
+  // RESERVADO, BUSCANDO, DEVOLVIENDO o ERROR: el slot esta tomado AHORA. No es un
+  // pedido invalido, es un estado transitorio: la orden espera y el slot conserva
+  // su estado.
+  return { ok: true, valor: { tipo: 'ESPERAR_SLOT', estado: estadoDelSlot.estado } }
 }
