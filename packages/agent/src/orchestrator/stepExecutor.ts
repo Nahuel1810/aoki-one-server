@@ -38,9 +38,9 @@ export interface ContextoDePaso {
 export function pedidoDeComandoDePaso(paso: PasoDeOrden): PedidoDeComando {
   // El comando del carro viaja como numero; el del elevador ya lo es.
   const comando = typeof paso.comando === 'number' ? paso.comando : paso.comando.codigo
-  // Todo paso espera el 100 (OK). El rango 1## cubre los errores, que el
-  // decodificador convierte en FalloDeEjecucion.
-  return { comando, respuestasEsperadas: [100, '1##'] }
+  // Todo paso espera el 100 (OK) y nada mas: un codigo del rango 1## es un error
+  // del PLC y tiene que salir por el canal de fallo, no confirmar el paso.
+  return { comando, respuestasEsperadas: [100] }
 }
 
 

@@ -6,6 +6,8 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   {
     ignores: [
+      // Worktrees de git: cada uno trae su propio repo y su propia config.
+      '.claude/',
       '**/node_modules/',
       '**/dist/',
       'public-dist/',

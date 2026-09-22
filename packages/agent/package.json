@@ -19,6 +19,8 @@
   },
   "dependencies": {
     "@aoki-one/domain": "*",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^12.9.0",
+    "express": "^4.19.2",
+    "modbus-serial": "^8.0.23"
   }
 }

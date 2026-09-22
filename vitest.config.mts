@@ -14,9 +14,10 @@ export default defineConfig({
   },
   test: {
     include: ['packages/{domain,agent,server}/src/**/*.test.ts'],
-    // La suite de aceptacion (los 55 portados) corre aparte: esta roja por diseño hasta
-    // que T03+ implemente el contrato, y este gate es bloqueante.
-    exclude: ['**/node_modules/**', '**/dist/**', '**/*.aceptacion.test.ts'],
+    // La suite de aceptacion ya esta en verde, asi que entra al gate bloqueante
+    // junto con la de unidad: a partir de aca una regresion sobre el contrato
+    // portado rompe el pipeline, que es todo el punto de haberla escrito.
+    exclude: ['**/node_modules/**', '**/dist/**'],
     environment: 'node',
     globals: false,
     coverage: {

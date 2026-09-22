@@ -95,7 +95,10 @@ export async function admitirOrden(
     id: generarId(),
     siteId,
     robotId,
-    externalOrderId: pedido.externalOrderId,
+    // RF35: una orden que nace en el agente lleva su propio id externo, asi puede
+    // empujarse al servidor cuando vuelva el enlace. El prefijo por agente que
+    // evita colisionar con los ids de picking entra con T30.
+    externalOrderId: pedido.externalOrderId ?? generarId(),
     tipo: pedido.tipo,
     origen: pedido.origen,
     estado: 'PENDING',

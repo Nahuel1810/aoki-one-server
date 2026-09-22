@@ -39,12 +39,14 @@ export function incrementarPendingReturns(actual: number): Result<number, ErrorP
 
 /** 2 -> 1. Con `actual` menor o igual a 1 es error, no 0. */
 export function decrementarPendingReturns(actual: number): Result<number, ErrorPendingReturns> {
-  if (!Number.isInteger(actual) || actual < 1) {
+  // No baja de 1: mientras el cajon este apoyado queda al menos una devolucion
+  // pendiente, y el contador llega a 0 recien cuando el slot se libera. Pedir un
+  // decremento desde 1 es un error del dominio, no un clamp silencioso: significa
+  // que el llamador perdio la cuenta.
+  if (!Number.isInteger(actual) || actual <= 1) {
     return { ok: false, error: { codigo: 'PENDING_RETURNS_FUERA_DE_RANGO', actual } }
   }
-  // No baja de 1: mientras el cajon este apoyado queda al menos una devolucion
-  // pendiente. El contador llega a 0 recien cuando el slot se libera.
-  return { ok: true, valor: Math.max(1, actual - 1) }
+  return { ok: true, valor: actual - 1 }
 }
 
 /**

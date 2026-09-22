@@ -11,7 +11,6 @@
 // compila, pasa los tests con dobles y no le habla al PLC. Por eso las lecturas
 // son dos metodos distintos y no uno con bandera.
 
-import { noImplementado } from '@aoki-one/domain'
 import type { TipoDispositivo } from '@aoki-one/domain'
 
 /**
@@ -51,7 +50,79 @@ export interface ModbusClient {
 }
 
 export function crearModbusClient(dispositivo: DispositivoRegistrado): ModbusClient {
-  return noImplementado('crearModbusClient', { dispositivo })
+  // Import diferido: el driver abre un socket al construirse y los tests que usan
+  // dobles no tienen por que cargarlo.
+  let cliente: ModbusRTU | null = null
+  let conectado = false
+
+  async function asegurarCliente(): Promise<ModbusRTU> {
+    const existente = cliente
+    if (existente !== null) {
+      return existente
+    }
+    // modbus-serial es CommonJS: segun el interop el constructor cae en `default`
+    // o en el modulo mismo. Se prueban los dos en vez de asumir uno.
+    const modulo: unknown = await import('modbus-serial')
+    const Constructor = resolverConstructor(modulo)
+    const creado = new Constructor()
+    creado.setID(dispositivo.unitId)
+    creado.setTimeout(dispositivo.timeoutMsDeSocket)
+    cliente = creado
+    return creado
+  }
+
+  return {
+    conectar: async () => {
+      const c = await asegurarCliente()
+      if (!conectado) {
+        await c.connectTCP(dispositivo.host, { port: dispositivo.puerto })
+        conectado = true
+      }
+    },
+    desconectar: async () => {
+      if (cliente !== null && conectado) {
+        await new Promise<void>((resolve) => {
+          cliente?.close(() => {
+            resolve()
+          })
+        })
+        conectado = false
+      }
+    },
+    estaConectado: () => conectado,
+    leerRegistrosDeRetencion: async (direccion, cantidad) => {
+      const c = await asegurarCliente()
+      const respuesta = await c.readHoldingRegisters(direccion, cantidad)
+      return respuesta.data
+    },
+    leerRegistrosDeEntrada: async (direccion, cantidad) => {
+      const c = await asegurarCliente()
+      const respuesta = await c.readInputRegisters(direccion, cantidad)
+      return respuesta.data
+    },
+    escribirRegistro: async (direccion, valor) => {
+      const c = await asegurarCliente()
+      await c.writeRegister(direccion, valor)
+    },
+  }
+}
+
+/** Resuelve el constructor del driver sin depender de la forma del interop. */
+function resolverConstructor(modulo: unknown): new () => ModbusRTU {
+  const conDefault = modulo as { default?: unknown }
+  const candidato = typeof conDefault.default === 'function' ? conDefault.default : modulo
+  return candidato as new () => ModbusRTU
+}
+
+/** Tipo minimo del driver: solo lo que este cliente usa. */
+interface ModbusRTU {
+  setID: (id: number) => void
+  setTimeout: (ms: number) => void
+  connectTCP: (host: string, opciones: { port: number }) => Promise<void>
+  close: (callback: () => void) => void
+  readHoldingRegisters: (direccion: number, cantidad: number) => Promise<{ data: number[] }>
+  readInputRegisters: (direccion: number, cantidad: number) => Promise<{ data: number[] }>
+  writeRegister: (direccion: number, valor: number) => Promise<void>
 }
 
 /**
@@ -71,5 +142,35 @@ export interface RegistroDeClientes {
 }
 
 export function crearRegistroDeClientes(): RegistroDeClientes {
-  return noImplementado('crearRegistroDeClientes')
+  const clientes = new Map<ClaveDeDispositivo, ModbusClient>()
+
+  return {
+    obtener: (clave) => clientes.get(clave),
+    asegurar: (dispositivo) => {
+      const clave = claveDeDispositivo(dispositivo.robotId, dispositivo.tipo)
+      const existente = clientes.get(clave)
+      if (existente !== undefined) {
+        return existente
+      }
+      const creado = crearModbusClient(dispositivo)
+      clientes.set(clave, creado)
+      return creado
+    },
+    recrear: async (dispositivo) => {
+      const clave = claveDeDispositivo(dispositivo.robotId, dispositivo.tipo)
+      const anterior = clientes.get(clave)
+      if (anterior !== undefined) {
+        await anterior.desconectar()
+      }
+      const creado = crearModbusClient(dispositivo)
+      clientes.set(clave, creado)
+      return creado
+    },
+    cerrarTodos: async () => {
+      for (const cliente of clientes.values()) {
+        await cliente.desconectar()
+      }
+      clientes.clear()
+    },
+  }
 }

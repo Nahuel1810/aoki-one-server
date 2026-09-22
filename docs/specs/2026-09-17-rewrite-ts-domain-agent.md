@@ -408,27 +408,27 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 ### Andamiaje y dominio
 
 - [x] **T01** Andamiaje: monorepo (`packages/domain`, `packages/agent`, `packages/server`), TS estricto, ESLint, Prettier, CI con type-check + tests.
-- [ ] **T02** Portar los 55 tests actuales como suite de aceptación (rojos al inicio; son el contrato).
-- [ ] **T03** `domain`: tipos y uniones discriminadas (slot, orden, paso, respuesta PLC).
-- [ ] **T04** `domain`: `locationCode` — parseo, lado por paridad, nivel, posición (RF01).
-- [ ] **T05** `domain`: traducción a comandos de carro y elevador (RF02).
-- [ ] **T06** `domain`: protocolo y decodificación de respuestas PLC, errores fatales (RF03).
-- [ ] **T07** `domain`: selección de slot por lado y cercanía (RF05).
-- [ ] **T08** `domain`: máquina de estados de slot + `pendingReturns` (RF06, RF07).
-- [ ] **T09** `domain`: máquina de estados de orden y secuencia de pasos (RF04).
-- [ ] **T10** `domain`: orden de servicio de cola — FIFO, PICK-antes-que-PUT, inversión por zona llena (RF09).
+- [x] **T02** Portar los 55 tests actuales como suite de aceptación (rojos al inicio; son el contrato).
+- [x] **T03** `domain`: tipos y uniones discriminadas (slot, orden, paso, respuesta PLC).
+- [x] **T04** `domain`: `locationCode` — parseo, lado por paridad, nivel, posición (RF01).
+- [x] **T05** `domain`: traducción a comandos de carro y elevador (RF02).
+- [x] **T06** `domain`: protocolo y decodificación de respuestas PLC, errores fatales (RF03).
+- [x] **T07** `domain`: selección de slot por lado y cercanía (RF05).
+- [x] **T08** `domain`: máquina de estados de slot + `pendingReturns` (RF06, RF07).
+- [x] **T09** `domain`: máquina de estados de orden y secuencia de pasos (RF04).
+- [x] **T10** `domain`: orden de servicio de cola — FIFO, PICK-antes-que-PUT, inversión por zona llena (RF09).
 ### Agente (notebook de la sucursal)
 
-- [ ] **T11** `agent`: esquema SQLite, migraciones y repositorios por entidad (RF23).
-- [ ] **T12** `agent`: cola persistente + espera por slot por evento, FIFO por `(robot, lado)` (RF08, RF10).
-- [ ] **T13** `agent`: `ModbusClient` + `DeviceMutex` + clasificación de errores de conectividad (RF16, RF19).
-- [ ] **T14** `agent`: handshake de paso con verificación de reset (RF12, RF17).
-- [ ] **T15** `agent`: monitor de conectividad con backoff, recreación y cesión de socket (RF18).
-- [ ] **T16** `agent`: orquestador — loop por robot, retry, deadlines por paso y orden (RF13).
-- [ ] **T17** `agent`: resolución de destino de PUT y devolución manual fuera-de-libros (RF11).
-- [ ] **T18** `agent`: dedupe idempotente por `(siteId, externalOrderId)` (RF14) y rehidratación (RF15).
-- [ ] **T19** `agent`: API HTTP local con validación zod, bind a la interfaz de LAN y token de mantenimiento para el comando directo a PLC (RF21, RF22).
-- [ ] **T20** `agent`: métricas y `/health` profundo, incluido el estado del enlace (RF24, RF25).
+- [x] **T11** `agent`: esquema SQLite, migraciones y repositorios por entidad (RF23).
+- [x] **T12** `agent`: cola persistente + espera por slot por evento, FIFO por `(robot, lado)` (RF08, RF10).
+- [x] **T13** `agent`: `ModbusClient` + `DeviceMutex` + clasificación de errores de conectividad (RF16, RF19).
+- [x] **T14** `agent`: handshake de paso con verificación de reset (RF12, RF17).
+- [x] **T15** `agent`: monitor de conectividad con backoff, recreación y cesión de socket (RF18).
+- [x] **T16** `agent`: orquestador — loop por robot, retry, deadlines por paso y orden (RF13).
+- [x] **T17** `agent`: resolución de destino de PUT y devolución manual fuera-de-libros (RF11).
+- [x] **T18** `agent`: dedupe idempotente por `(siteId, externalOrderId)` (RF14) y rehidratación (RF15).
+- [x] **T19** `agent`: API HTTP local con validación zod, bind a la interfaz de LAN y token de mantenimiento para el comando directo a PLC (RF21, RF22).
+- [x] **T20** `agent`: métricas y `/health` profundo, incluido el estado del enlace (RF24, RF25).
 - [ ] **T21** `agent`: logs estructurados, retención y purga de eventos.
 - [ ] **T28** `agent`: `OrderSource` por long-poll — reclamo con lease, backoff con jitter, reconexión (RF28, RF33, RF37).
 - [ ] **T29** `agent`: outbox de transiciones y drenado ordenado e idempotente al reconectar (RF34).
@@ -448,7 +448,7 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 
 - [ ] **T22** Garantizar el contrato que consume el front nuevo: rutas, `{ ok, data }`, `side` y `robotId` en `GET /api/slots`, estado del enlace en `/health`. El rediseño va por su propia spec.
 - [ ] **T23** Script de migración de datos desde la base actual.
-- [ ] **T24** Tests unitarios (cobertura completa de `domain`).
+- [x] **T24** Tests unitarios (cobertura completa de `domain`).
 - [ ] **T25** Tests funcionales: e2e con PLC simulado y servidor de prueba, incluidos los caminos de error y recuperación, pérdida de enlace, re-entrega por lease vencido y drenado de outbox.
 - [ ] **T26** Plan de cutover en dos tiempos: (1) agente nuevo en paralelo contra el robot real, con cola local, validado una jornada completa; (2) recién ahí se enciende el enlace con el servidor. Nunca los dos el mismo día.
 - [ ] **T38** Repuntar la app de picking al servidor Linux y dar de baja VSCode Ports.

@@ -13,7 +13,7 @@
 // La espera es por lado: una orden esperando el lado izquierdo no bloquea a una
 // del derecho.
 
-import { parsearLocationCode, rankearSlotsParaPick } from '@aoki-one/domain'
+import { parsearLocationCode, rankearSlotsParaPick, transicionarSlot } from '@aoki-one/domain'
 import { resolverDestinoDePut } from './putTargetResolution.js'
 import type {
   ErrorLocationCode,
@@ -121,6 +121,10 @@ export async function resolverSlotDeOrden(
       }
     }
 
+    await repositorios.ordenes.actualizar(orden.id, {
+      slotLocationCode: slot.locationCode,
+      waitingForSlot: false,
+    })
     return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: slot.locationCode } }
   }
 
@@ -135,8 +139,11 @@ export async function resolverSlotDeOrden(
 
   const ganador = ranking.valor[0]
   if (ganador === undefined) {
-    // No se reencola: la orden conserva su creadaEn y con eso su lugar en la cola.
+    // No se reencola ni se toca creadaEn: con eso conserva su lugar en la cola.
     // El legacy hacia clearActive + enqueue y la mandaba al final cada vez.
+    // Vuelve a PENDING: suelta el robot pero conserva creadaEn, asi que no pierde
+    // su lugar en la cola.
+    await repositorios.ordenes.actualizar(orden.id, { estado: 'PENDING', waitingForSlot: true })
     return {
       ok: true,
       valor: {
@@ -146,6 +153,21 @@ export async function resolverSlotDeOrden(
       },
     }
   }
+
+  // La reserva se persiste al asignar: entre la eleccion y la maniobra no puede
+  // colarse otra orden sobre el mismo slot.
+  const estadoActual = zona.find((slot) => slot.locationCode === ganador.locationCode)?.estado
+  const reserva = transicionarSlot(estadoActual ?? { estado: 'LIBRE' }, {
+    tipo: 'RESERVAR_PARA_PICK',
+    ordenId: orden.id,
+  })
+  if (reserva.ok) {
+    await repositorios.slots.guardarEstado(orden.robotId, ganador.locationCode, reserva.valor)
+  }
+  await repositorios.ordenes.actualizar(orden.id, {
+    slotLocationCode: ganador.locationCode,
+    waitingForSlot: false,
+  })
 
   return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: ganador.locationCode } }
 }

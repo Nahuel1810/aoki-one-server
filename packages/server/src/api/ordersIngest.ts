@@ -15,9 +15,7 @@
 //
 // ESQUELETO DE CONTRATOS previo a T02: firmas reales, cero implementacion.
 
-import { noImplementado } from '@aoki-one/domain'
 
-import { noImplementadoAsync } from '../noImplementadoAsync.js'
 import type {
   AltaDePedido,
   PedidoDelServidor,
@@ -43,11 +41,27 @@ export type ResultadoDeIngreso =
  * de la misma clave no pueden devolver las dos `created: true`, que es la
  * carrera que el test secuencial del legacy no detectaba.
  */
-export function ingresarPedido(
+export async function ingresarPedido(
   repositorio: RepositorioDePedidos,
   alta: AltaDePedido,
 ): Promise<ResultadoDeIngreso> {
-  return noImplementadoAsync('ingresarPedido', { repositorio, alta })
+  const insercion = await repositorio.insertar(alta)
+  if (insercion.ok) {
+    return { tipo: 'CREADO', pedido: insercion.valor }
+  }
+
+  // La carrera de dos altas simultaneas la corta la base con CLAVE_DUPLICADA y
+  // aca se traduce a "ya existia". El legacy consultaba primero y despues
+  // insertaba, y entre las dos lecturas quedaba la ventana.
+  const existente = await repositorio.buscarPorClave({
+    siteId: alta.siteId,
+    externalOrderId: alta.externalOrderId,
+  })
+  if (existente === null) {
+    throw new Error('el alta fue rechazada por clave duplicada pero el pedido no existe')
+  }
+
+  return { tipo: 'YA_EXISTIA', pedido: existente }
 }
 
 /** Codigos que el contrato actual ya fija: 202 el alta nueva, 200 el reenvio. */
@@ -73,5 +87,11 @@ export interface RespuestaDeIngreso {
  * compilador obliga a decidir con que codigo se responde.
  */
 export function responderIngreso(resultado: ResultadoDeIngreso): RespuestaDeIngreso {
-  return noImplementado('responderIngreso', { resultado })
+  const created = resultado.tipo === 'CREADO'
+  return {
+    // 202 en el alta nueva, 200 en el reenvio: el reenvio NO es un error, es la
+    // confirmacion de que la orden ya esta tomada.
+    estadoHttp: created ? 202 : 200,
+    cuerpo: { ok: true, data: resultado.pedido, created },
+  }
 }

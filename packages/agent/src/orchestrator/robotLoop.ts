@@ -15,8 +15,9 @@ import {
   parsearLocationCode,
   resolverPick,
   transicionarOrden,
+  transicionarSlot,
 } from '@aoki-one/domain'
-import type { PasoDeOrden } from '@aoki-one/domain'
+import type { EventoSlot, PasoDeOrden } from '@aoki-one/domain'
 import type { Orden } from '../persistence/index.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
 import { resolverSlotDeOrden } from './slotWait.js'
@@ -74,26 +75,6 @@ export async function ejecutarCicloDeRobot(
     return { tipo: 'SIN_TRABAJO' }
   }
 
-  const slot = await resolverSlotDeOrden(dependencias, orden)
-  if (!slot.ok) {
-    await marcarEnError(dependencias, orden, JSON.stringify(slot.error))
-    return {
-      tipo: 'ORDEN_TERMINADA',
-      ordenId: orden.id,
-      estadoFinal: 'ERROR',
-      huboManiobra: false,
-    }
-  }
-
-  if (slot.valor.tipo === 'EN_ESPERA') {
-    // No se reencola: conserva su creadaEn y con eso su lugar. El robot queda
-    // libre para atender otra orden, posiblemente del otro lado.
-    await repositorios.ordenes.actualizar(orden.id, { waitingForSlot: true })
-    return { tipo: 'ORDEN_EN_ESPERA_DE_SLOT', ordenId: orden.id, lado: slot.valor.lado }
-  }
-
-  const slotLocationCode = slot.valor.slotLocationCode
-
   // RF07: un PICK sobre un cajon que YA esta apoyado no genera maniobra.
   if (orden.tipo === 'PICK') {
     const yaApoyado = await repositorios.slots.buscarPorCajonDeOrigen(robotId, orden.locationCode)
@@ -123,6 +104,26 @@ export async function ejecutarCicloDeRobot(
     }
   }
 
+  const slot = await resolverSlotDeOrden(dependencias, orden)
+  if (!slot.ok) {
+    await marcarEnError(dependencias, orden, JSON.stringify(slot.error))
+    return {
+      tipo: 'ORDEN_TERMINADA',
+      ordenId: orden.id,
+      estadoFinal: 'ERROR',
+      huboManiobra: false,
+    }
+  }
+
+  if (slot.valor.tipo === 'EN_ESPERA') {
+    // No se reencola: conserva su creadaEn y con eso su lugar. El robot queda
+    // libre para atender otra orden, posiblemente del otro lado.
+    await repositorios.ordenes.actualizar(orden.id, { waitingForSlot: true })
+    return { tipo: 'ORDEN_EN_ESPERA_DE_SLOT', ordenId: orden.id, lado: slot.valor.lado }
+  }
+
+  const slotLocationCode = slot.valor.slotLocationCode
+
   // Toma del robot y del slot, y arranque de la orden.
   await repositorios.robots.fijarOrdenActiva(robotId, orden.id)
   await repositorios.ordenes.actualizar(orden.id, {
@@ -132,7 +133,20 @@ export async function ejecutarCicloDeRobot(
     iniciadaEn: reloj.ahoraMs(),
   })
 
+  await registrarEvento(dependencias, orden.id, 'ORDER_STARTED', 'INFO', {
+    robotId,
+    slotLocationCode,
+  })
+
   const ejecucion = await ejecutarManiobra(dependencias, { ...orden, slotLocationCode })
+
+  await registrarEvento(
+    dependencias,
+    orden.id,
+    ejecucion.estadoFinal === 'DONE' ? 'ORDER_DONE' : 'ORDER_FAILED',
+    ejecucion.estadoFinal === 'DONE' ? 'INFO' : 'ERROR',
+    { robotId },
+  )
 
   await repositorios.robots.fijarOrdenActiva(robotId, null)
 
@@ -162,6 +176,15 @@ async function ejecutarManiobra(
     return { estadoFinal: 'ERROR' }
   }
 
+  // El slot entra en maniobra: BUSCANDO para un PICK, DEVOLVIENDO para un PUT.
+  await transicionarSlotDeOrden(
+    dependencias,
+    orden,
+    orden.tipo === 'PICK'
+      ? { tipo: 'INICIAR_BUSQUEDA', ordenId: orden.id }
+      : { tipo: 'INICIAR_DEVOLUCION', ordenId: orden.id },
+  )
+
   for (const paso of pasos.valor) {
     await repositorios.pasos.registrar({
       ordenId: orden.id,
@@ -189,6 +212,11 @@ async function ejecutarManiobra(
         resultado.error.codigo === 'FALLO_FATAL'
           ? resultado.error.fallo
           : resultado.error.ultimoFallo
+      await registrarEvento(dependencias, orden.id, 'STEP_FAILED', 'ERROR', {
+        seq: paso.seq,
+        tipo: paso.tipo,
+        mensaje: mensajeDeFallo(fallo),
+      })
       await marcarEnError(dependencias, orden, mensajeDeFallo(fallo))
       return { estadoFinal: 'ERROR' }
     }
@@ -201,11 +229,73 @@ async function ejecutarManiobra(
     await repositorios.ordenes.actualizar(orden.id, { currentStepIndex: paso.seq })
   }
 
+  if (orden.tipo === 'PICK') {
+    // El cajon queda apoyado con una devolucion pendiente (RF07).
+    await transicionarSlotDeOrden(dependencias, orden, {
+      tipo: 'OCUPAR',
+      cajon: { id: dependencias.generarId(), ubicacionDeOrigen: orden.locationCode },
+    })
+  } else {
+    await transicionarSlotDeOrden(dependencias, orden, { tipo: 'LIBERAR' })
+  }
+
   await repositorios.ordenes.actualizar(orden.id, {
     estado: 'DONE',
     finalizadaEn: reloj.ahoraMs(),
   })
   return { estadoFinal: 'DONE' }
+}
+
+/**
+ * Deja constancia de lo que le paso a la orden.
+ *
+ * Es la traza con la que el operario reconstruye por que una orden quedo donde
+ * quedo. El legacy la escribia dentro del snapshot completo; aca es una fila
+ * propia por evento (RF23).
+ */
+async function registrarEvento(
+  dependencias: DependenciasDelOrquestador,
+  ordenId: string,
+  evento: string,
+  severidad: 'INFO' | 'ERROR',
+  metadata: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  await dependencias.repositorios.eventos.registrar({
+    id: dependencias.generarId(),
+    ts: dependencias.reloj.ahoraMs(),
+    tipoDeEntidad: 'ORDER',
+    entidadId: ordenId,
+    evento,
+    severidad,
+    metadata,
+  })
+}
+
+/**
+ * Mueve el slot de la orden por su maquina de estados.
+ *
+ * Solo se llama en el camino feliz: si un paso falla el slot NO se toca y
+ * conserva su estado a la espera del retry (RF13).
+ */
+async function transicionarSlotDeOrden(
+  dependencias: DependenciasDelOrquestador,
+  orden: Orden,
+  evento: EventoSlot,
+): Promise<void> {
+  const { repositorios } = dependencias
+  if (orden.slotLocationCode === null) {
+    return
+  }
+
+  const slot = await repositorios.slots.buscar(orden.robotId, orden.slotLocationCode)
+  if (slot === undefined) {
+    return
+  }
+
+  const siguiente = transicionarSlot(slot.estado, evento)
+  if (siguiente.ok) {
+    await repositorios.slots.guardarEstado(orden.robotId, orden.slotLocationCode, siguiente.valor)
+  }
 }
 
 /** El mensaje del PLC se propaga tal cual al errorReason que ve el operario. */

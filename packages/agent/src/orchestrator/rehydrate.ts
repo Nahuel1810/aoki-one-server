@@ -54,8 +54,12 @@ export async function rehidratar(
 
   return {
     ordenesRecuperadasDeEnCurso: recuperadas,
-    // Respetan su antiguedad: listar() ordena por creadaEn.
-    ordenesPendientes: pendientes.map((orden) => orden.id),
+    // De la mas vieja a la mas nueva. Se ordena aca y no se confia en el orden que
+    // devuelva el repositorio: es la garantia de RF15 de que la orden interrumpida
+    // no pierde su lugar frente a las que entraron despues.
+    ordenesPendientes: [...pendientes]
+      .sort((a, b) => a.creadaEn - b.creadaEn)
+      .map((orden) => orden.id),
     robotsLiberados: liberados,
   }
 }

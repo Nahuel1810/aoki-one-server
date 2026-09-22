@@ -111,6 +111,12 @@ export function rankearSlotsParaPick(
       return distModuloA - distModuloB
     }
 
+    // A igual distancia gana el modulo de numero menor: el desempate es absoluto
+    // y no depende de en que orden llegaron los slots.
+    if (a.ubicacion.modulo !== b.ubicacion.modulo) {
+      return a.ubicacion.modulo - b.ubicacion.modulo
+    }
+
     return a.ubicacion.posicion - b.ubicacion.posicion
   })
 
