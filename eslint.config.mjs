@@ -33,6 +33,14 @@ export default tseslint.config(
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
+
+      // El guion bajo marca "declarado a proposito y no usado". Sin esto el gate de lint
+      // contradice al de tipos: noUnusedParameters de tsc si acepta el prefijo, y toda
+      // firma sin implementar y todo doble de puerto rompe el lint.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/no-unsafe-assignment': 'error',
       '@typescript-eslint/no-unsafe-member-access': 'error',
       '@typescript-eslint/no-unsafe-call': 'error',
