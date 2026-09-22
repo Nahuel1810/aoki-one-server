@@ -110,8 +110,13 @@ export function esErrorDeConectividad(error: unknown): boolean {
   if (typeof codigo === 'string' && CODIGOS_DE_TRANSPORTE.has(codigo)) {
     return true
   }
+  // El legacy compara errno stringificado; aca solo tienen sentido string y number,
+  // que son las dos formas en que Node lo expone.
   const errno = like.errno
-  if (errno !== undefined && errno !== null && CODIGOS_DE_TRANSPORTE.has(String(errno))) {
+  if (typeof errno === 'string' && CODIGOS_DE_TRANSPORTE.has(errno)) {
+    return true
+  }
+  if (typeof errno === 'number' && CODIGOS_DE_TRANSPORTE.has(String(errno))) {
     return true
   }
 
