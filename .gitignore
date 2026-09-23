@@ -4,3 +4,4 @@ data/persistence.db-shm
 data/persistence.db-wal
 .env
 .env.example
+public-dist/

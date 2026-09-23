@@ -1,0 +1,202 @@
+@import 'tailwindcss';
+
+/*
+ * Design system de Aoki One.
+ *
+ * El teal de marca (#1582a4, tomado del logo) manda en el chrome: header,
+ * navegacion y accion primaria. Los estados de la operacion tienen colores
+ * propios y bien separados del teal, para que nunca se confunda "esto es de
+ * Aoki" con "esto esta pasando ahora".
+ *
+ * La tipografia se empaqueta con el bundle (@fontsource): el agente corre en la
+ * LAN de una sucursal y no se puede depender de Google Fonts para renderizar.
+ */
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* --- Marca --- */
+  --color-brand-50: #eef9fc;
+  --color-brand-100: #d5f0f7;
+  --color-brand-200: #b0e2ef;
+  --color-brand-300: #7bcde3;
+  --color-brand-400: #3fafcf;
+  --color-brand-500: #1582a4;
+  --color-brand-600: #136f8c;
+  --color-brand-700: #155b72;
+  --color-brand-800: #17485b;
+  --color-brand-900: #133b4c;
+  --color-brand-950: #0a2632;
+
+  /* --- Superficies --- */
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eef2f5;
+  --color-surface-muted: #e6ecf0;
+  --color-border: #dbe3e9;
+  --color-border-strong: #bfcad3;
+  --color-ink: #0d1c24;
+  --color-ink-muted: #51636e;
+  --color-ink-subtle: #8496a1;
+
+  /* --- Accion primaria: el teal de marca --- */
+  --color-action: #1582a4;
+  --color-action-hover: #136f8c;
+  --color-action-fg: #ffffff;
+
+  /*
+   * --- Estado: LISTO. El cajon llego y esta esperando al operario.
+   * Verde, porque para quien viene a buscarlo es exactamente una buena
+   * noticia. No usa el teal de marca, que es el color de las acciones.
+   */
+  --color-ready: #0f7a47;
+  --color-ready-soft: #e8fbf0;
+  --color-ready-border: #93e3b6;
+  --color-ready-ink: #0a5c35;
+
+  /* --- Estado: EN MOVIMIENTO (RESERVADO / BUSCANDO / DEVOLVIENDO) --- */
+  --color-motion: #c2620a;
+  --color-motion-soft: #fff6e9;
+  --color-motion-border: #f6c98c;
+  --color-motion-ink: #8a4405;
+
+  /* --- Estado: ERROR --- */
+  --color-fault: #c2342a;
+  --color-fault-soft: #fef1f0;
+  --color-fault-border: #f5a9a3;
+  --color-fault-ink: #8f1d14;
+
+  /* --- Estado: todo en marcha --- */
+  --color-online: #0b7a52;
+  --color-online-soft: #e9fbf2;
+  --color-online-border: #9de9c3;
+
+  /*
+   * Escala tactil. 56px de piso, por encima del minimo de 44px:
+   * la tablet se opera de pie y con guantes.
+   */
+  --spacing-touch: 3.5rem;
+  --spacing-touch-lg: 4.5rem;
+
+  --radius-control: 0.7rem;
+  --radius-panel: 1.1rem;
+
+  --shadow-card: 0 1px 2px rgba(13, 28, 36, 0.05), 0 4px 12px -4px rgba(13, 28, 36, 0.08);
+  --shadow-raised: 0 2px 4px rgba(13, 28, 36, 0.06), 0 12px 28px -8px rgba(13, 28, 36, 0.16);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* Evita el zoom por doble toque sin bloquear el pinch-to-zoom (accesibilidad). */
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* Sin resaltado azul al tocar: se ve como un bug en una tablet montada. */
+    -webkit-tap-highlight-color: transparent;
+
+    /* Un tinte frio muy leve en vez de gris plano: da profundidad sin ruido. */
+    background-color: var(--color-surface-sunken);
+    background-image:
+      radial-gradient(1200px 500px at 0% -10%, rgba(21, 130, 164, 0.07), transparent 70%),
+      radial-gradient(900px 400px at 100% 0%, rgba(21, 130, 164, 0.04), transparent 65%);
+    background-attachment: fixed;
+  }
+
+  /*
+   * Los codigos de ubicacion y los contadores se refrescan cada 5s.
+   * Sin cifras tabulares, cada actualizacion mueve el texto de lugar.
+   */
+  :where(body) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+
+  button {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  /* Codigos de ubicacion: ancho fijo por caracter, sin ligaduras. */
+  .font-code {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'ss01';
+    letter-spacing: -0.01em;
+  }
+
+  /* El logo es teal sobre transparente: sobre el header oscuro va en blanco. */
+  .logo-invert {
+    filter: brightness(0) invert(1);
+  }
+
+  /* Latido lento: unico movimiento decorativo permitido, y solo sobre
+     slots con una maniobra fisica en curso. */
+  .animate-activity {
+    animation: aoki-activity 1.8s ease-in-out infinite;
+  }
+
+  .animate-overlay {
+    animation: aoki-fade-in 120ms ease-out;
+  }
+
+  .animate-panel {
+    animation: aoki-panel-in 140ms ease-out;
+  }
+
+  .animate-sheet {
+    animation: aoki-sheet-in 180ms ease-out;
+  }
+}
+
+@keyframes aoki-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes aoki-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes aoki-sheet-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes aoki-activity {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/*
+ * Movimiento: solo donde comunica actividad fisica real.
+ * Se respeta la preferencia del sistema.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
