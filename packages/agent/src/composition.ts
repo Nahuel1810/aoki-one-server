@@ -24,6 +24,15 @@ export interface OpcionesDelAgente {
   readonly httpPuerto: number
   readonly httpBind: string
   readonly zonaDePickeo: readonly string[]
+  /**
+   * Token del comando directo a PLC (RF22, segundo nivel).
+   *
+   * `null` = no configurado, y entonces el endpoint queda DESHABILITADO. Falla
+   * cerrado a proposito: es el unico endpoint que escribe registros salteandose
+   * el orquestador y las maquinas de estado, y arrancar sin configurar no puede
+   * habilitarlo en silencio. Mismo criterio que RF20 con la simulacion.
+   */
+  readonly tokenDeMantenimiento: string | null
 }
 
 export interface Agente {
@@ -130,7 +139,12 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
   }
 
   const api = opciones.montarApi
-    ? crearServidorHttp({ orquestador, simularPlc: opciones.simularPlc, despertar })
+    ? crearServidorHttp({
+        orquestador,
+        simularPlc: opciones.simularPlc,
+        despertar,
+        tokenDeMantenimiento: opciones.tokenDeMantenimiento,
+      })
     : null
 
   let direccion: DireccionDeEscucha | null = null

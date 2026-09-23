@@ -3,6 +3,8 @@
 
 import { crearDeviceRepository } from './deviceRepository.js'
 import { crearEventRepository } from './eventRepository.js'
+import { crearMetricsRepository } from './metricsRepository.js'
+import type { MetricsRepository } from './metricsRepository.js'
 import { crearOrderRepository } from './orderRepository.js'
 import { crearOrderStepRepository } from './orderStepRepository.js'
 import { crearRobotRepository } from './robotRepository.js'
@@ -18,6 +20,7 @@ import type { SlotRepository } from './slotRepository.js'
 export * from './database.js'
 export * from './deviceRepository.js'
 export * from './eventRepository.js'
+export * from './metricsRepository.js'
 export * from './orderRepository.js'
 export * from './orderStepRepository.js'
 export * from './robotRepository.js'
@@ -32,6 +35,7 @@ export interface RepositoriosDelAgente {
   readonly eventos: EventRepository
   /** Los CARRO / ELEVADOR dados de alta. Es lo que consultan la API y el monitor. */
   readonly dispositivos: DeviceRepository
+  readonly metricas: MetricsRepository
 }
 
 export function crearRepositorios(base: BaseDelAgente): RepositoriosDelAgente {
@@ -42,5 +46,6 @@ export function crearRepositorios(base: BaseDelAgente): RepositoriosDelAgente {
     slots: crearSlotRepository(base),
     eventos: crearEventRepository(base),
     dispositivos: crearDeviceRepository(base),
+    metricas: crearMetricsRepository(base),
   }
 }

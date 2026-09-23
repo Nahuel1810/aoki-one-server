@@ -171,6 +171,9 @@ describe('e2e del flujo de PICK en simulacion', () => {
         httpPuerto: 0,
         httpBind: '127.0.0.1',
         zonaDePickeo: ZONA_DE_PICKEO,
+  // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
+  // Este fixture no lo usa, asi que va en null a proposito.
+  tokenDeMantenimiento: null,
       })
 
       await agente.iniciar()

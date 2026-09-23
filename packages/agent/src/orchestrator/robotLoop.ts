@@ -94,6 +94,8 @@ export async function ejecutarCicloDeRobot(
           waitingForSlot: false,
           finalizadaEn: reloj.ahoraMs(),
         })
+        // Tambien cuenta: es un pedido atendido, aunque el robot no se haya movido.
+        await registrarMetrica(dependencias, orden, 'DONE')
         return {
           tipo: 'ORDEN_TERMINADA',
           ordenId: orden.id,
@@ -229,6 +231,8 @@ async function ejecutarManiobra(
     await repositorios.ordenes.actualizar(orden.id, { currentStepIndex: paso.seq })
   }
 
+  await registrarMetrica(dependencias, orden, 'DONE')
+
   if (orden.tipo === 'PICK') {
     // El cajon queda apoyado con una devolucion pendiente (RF07).
     await transicionarSlotDeOrden(dependencias, orden, {
@@ -313,6 +317,32 @@ async function marcarEnError(
   await repositorios.ordenes.actualizar(orden.id, {
     estado: siguiente.ok ? siguiente.valor : 'ERROR',
     errorReason: motivo,
+    finalizadaEn: reloj.ahoraMs(),
+  })
+  await registrarMetrica(dependencias, orden, 'ERROR')
+}
+
+/**
+ * Deja la metrica de la orden terminada (RF24).
+ *
+ * Se registran tambien las que fallan: medir solo los exitos esconde justamente
+ * el numero que hay que mirar.
+ */
+async function registrarMetrica(
+  dependencias: DependenciasDelOrquestador,
+  orden: Orden,
+  estado: EstadoOrden,
+): Promise<void> {
+  const { repositorios, reloj, siteId } = dependencias
+  await repositorios.metricas.registrar({
+    ordenId: orden.id,
+    siteId,
+    origen: orden.origen,
+    tipo: orden.tipo,
+    locationCode: orden.locationCode,
+    estado,
+    creadaEn: orden.creadaEn,
+    iniciadaEn: orden.iniciadaEn,
     finalizadaEn: reloj.ahoraMs(),
   })
 }

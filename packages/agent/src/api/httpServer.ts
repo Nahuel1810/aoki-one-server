@@ -8,10 +8,14 @@
 // Sin login de operario: todo lo que consume la tablet va sin credencial y el
 // control es de red (el listener bindea a la IP de LAN, no a 0.0.0.0).
 //
-// El segundo nivel de autorizacion de RF22 —el token de mantenimiento del
-// comando directo a PLC, el unico endpoint que escribe registros salteandose el
-// orquestador y las maquinas de estado— NO esta declarado: RF22 figura entero en
-// "RF sin cobertura" y ningun test portado manda credencial. Entra con su test.
+// El segundo nivel de RF22 es el token de mantenimiento del comando directo a
+// PLC, el unico endpoint que escribe registros salteandose el orquestador y las
+// maquinas de estado. Falla CERRADO: sin token configurado el endpoint responde
+// 503 y no mueve nada.
+//
+// Toda entrada se valida por esquema (zod) antes de tocar el dominio: un body
+// con la forma equivocada tiene que salir por 400 con el motivo, no reventar
+// adentro del orquestador con un mensaje que no le dice nada al operario.
 
 import { createServer } from 'node:http'
 
@@ -22,7 +26,8 @@ import {
   transicionarSlot,
 } from '@aoki-one/domain'
 import express from 'express'
-import type { Request, Response } from 'express'
+import type { NextFunction, Request, Response } from 'express'
+import { z } from 'zod'
 
 import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador } from '../orchestrator/ports.js'
@@ -32,9 +37,14 @@ export type CuerpoDeRespuesta<T> =
   | { readonly ok: true; readonly data: T; readonly created?: boolean }
   | { readonly ok: false; readonly error: string }
 
+/** Header del token de mantenimiento (RF22). */
+export const HEADER_DE_MANTENIMIENTO = 'x-aoki-maintenance-token'
+
 export interface DependenciasDeApi {
   readonly orquestador: DependenciasDelOrquestador
   readonly simularPlc: boolean
+  /** `null` = no configurado: el comando directo a PLC queda deshabilitado. */
+  readonly tokenDeMantenimiento: string | null
   /**
    * Despierta el loop del robot. El avance es POR EVENTO: sin esto la orden
    * esperaria al tick de seguridad, que a proposito es de baja frecuencia.
@@ -82,7 +92,7 @@ export function crearServidorHttp(dependencias: DependenciasDeApi): ServidorHttp
 }
 
 function construirApp(dependencias: DependenciasDeApi): express.Express {
-  const { orquestador, simularPlc, despertar } = dependencias
+  const { orquestador, simularPlc, despertar, tokenDeMantenimiento } = dependencias
   const { repositorios, siteId } = orquestador
   const arrancadoEn = orquestador.reloj.ahoraMs()
 
@@ -97,6 +107,42 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   function error(res: Response, estado: number, mensaje: string): void {
     const cuerpo: CuerpoDeRespuesta<never> = { ok: false, error: mensaje }
     res.status(estado).json(cuerpo)
+  }
+
+  /**
+   * Segundo nivel de RF22. Falla cerrado: sin token configurado no hay forma de
+   * habilitar el endpoint, ni siquiera acertandole al header.
+   */
+  function exigirMantenimiento(req: Request, res: Response, next: NextFunction): void {
+    if (tokenDeMantenimiento === null) {
+      error(
+        res,
+        503,
+        'el comando directo a PLC esta deshabilitado: falta configurar el token de mantenimiento',
+      )
+      return
+    }
+    if (req.get(HEADER_DE_MANTENIMIENTO) !== tokenDeMantenimiento) {
+      error(res, 401, 'token de mantenimiento invalido o ausente')
+      return
+    }
+    next()
+  }
+
+  /**
+   * Valida el cuerpo contra su esquema y responde 400 con el motivo si no pasa.
+   * Devuelve `null` cuando ya respondio, para que el handler corte.
+   */
+  function validar<T>(esquema: z.ZodType<T>, valor: unknown, res: Response): T | null {
+    const resultado = esquema.safeParse(valor)
+    if (resultado.success) {
+      return resultado.data
+    }
+    const primero = resultado.error.issues[0]
+    const donde = primero === undefined ? '' : primero.path.join('.')
+    const motivo = primero?.message ?? 'entrada invalida'
+    error(res, 400, donde === '' ? motivo : `${donde}: ${motivo}`)
+    return null
   }
 
   // ---------------------------------------------------------------- health
@@ -167,21 +213,19 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // ---------------------------------------------------------------- ordenes
   app.post('/api/orders', (req: Request, res: Response) => {
     void (async () => {
-      const cuerpo = req.body as Record<string, unknown>
-      const tipo = texto(cuerpo['type'], 'PICK').toUpperCase()
-      if (tipo !== 'PICK' && tipo !== 'PUT') {
-        error(res, 400, 'type debe ser PICK o PUT')
+      const pedido = validar(ALTA_DE_ORDEN, req.body, res)
+      if (pedido === null) {
         return
       }
 
       const admision = await admitirOrden(orquestador, {
         robotId: null,
-        externalOrderId: textoOpcional(cuerpo['externalOrderId']),
-        tipo,
+        externalOrderId: pedido.externalOrderId ?? null,
+        tipo: pedido.type,
         // El alta local es siempre MANUAL: el ingreso de picking se fue al servidor.
         origen: 'MANUAL',
-        locationCode: texto(cuerpo['locationCode']),
-        targetLocation: textoOpcional(cuerpo['targetLocation']),
+        locationCode: pedido.locationCode,
+        targetLocation: pedido.targetLocation ?? null,
       })
 
       if (!admision.ok) {
@@ -221,8 +265,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
 
   app.post('/api/orders/simulate', (req: Request, res: Response) => {
     void (async () => {
-      const cuerpo = req.body as Record<string, unknown>
-      const ubicacion = parsearLocationCode(texto(cuerpo['locationCode']))
+      const pedido = validar(SIMULACION, req.body, res)
+      if (pedido === null) {
+        return
+      }
+
+      const ubicacion = parsearLocationCode(pedido.locationCode)
       if (!ubicacion.ok) {
         error(res, 400, ubicacion.error.codigo)
         return
@@ -267,6 +315,30 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           { seq: 5, deviceType: 'CARRO', commandCode: devolver.valor.codigo },
         ],
       })
+    })()
+  })
+
+  // RF24. Va antes de /api/orders/:id: son dos segmentos y el parametro captura uno.
+  app.get('/api/orders/metrics/report', (req: Request, res: Response) => {
+    void (async () => {
+      const rango = validar(RANGO_DE_REPORTE, req.query, res)
+      if (rango === null) {
+        return
+      }
+      if (
+        rango.startDate !== undefined &&
+        rango.endDate !== undefined &&
+        rango.endDate < rango.startDate
+      ) {
+        error(res, 400, 'endDate debe ser mayor o igual a startDate')
+        return
+      }
+
+      const reporte = await repositorios.metricas.reporte({
+        ...(rango.startDate === undefined ? {} : { desdeMs: rango.startDate }),
+        ...(rango.endDate === undefined ? {} : { hastaMs: rango.endDate }),
+      })
+      ok(res, 200, reporte)
     })()
   })
 
@@ -363,20 +435,18 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // ---------------------------------------------------------------- dispositivos
   app.post('/api/devices/register', (req: Request, res: Response) => {
     void (async () => {
-      const cuerpo = req.body as Record<string, unknown>
-      const tipo = texto(cuerpo['type']).toUpperCase()
-      if (tipo !== 'CARRO' && tipo !== 'ELEVADOR') {
-        error(res, 400, 'type debe ser CARRO o ELEVADOR')
+      const alta = validar(ALTA_DE_DISPOSITIVO, req.body, res)
+      if (alta === null) {
         return
       }
 
       const dispositivo = await repositorios.dispositivos.registrar({
-        robotId: texto(cuerpo['robotId']),
-        tipo,
-        host: texto(cuerpo['host']),
-        puerto: Number(cuerpo['port'] ?? 502),
-        unitId: Number(cuerpo['unitId'] ?? 255),
-        timeoutMsDeSocket: Number(cuerpo['timeoutMs'] ?? 2000),
+        robotId: alta.robotId,
+        tipo: alta.type,
+        host: alta.host,
+        puerto: alta.port,
+        unitId: alta.unitId,
+        timeoutMsDeSocket: alta.timeoutMs,
       })
 
       ok(res, 201, dispositivo)
@@ -404,40 +474,41 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     })()
   })
 
-  app.post('/api/devices/:robotId/:dispositivo/command', (req: Request, res: Response) => {
-    void (async () => {
-      const tipo = texto(req.params['dispositivo']).toUpperCase()
-      if (tipo !== 'CARRO' && tipo !== 'ELEVADOR') {
-        error(res, 400, 'dispositivo debe ser carro o elevador')
-        return
-      }
+  app.post(
+    '/api/devices/:robotId/:dispositivo/command',
+    exigirMantenimiento,
+    (req: Request, res: Response) => {
+      void (async () => {
+        const tipo = validar(TIPO_DE_DISPOSITIVO, texto(req.params['dispositivo']).toUpperCase(), res)
+        if (tipo === null) {
+          return
+        }
 
-      const cuerpo = req.body as Record<string, unknown>
-      const valor = Number(cuerpo['value'])
-      if (!Number.isFinite(valor)) {
-        error(res, 400, 'value debe ser un numero')
-        return
-      }
+        const pedido = validar(COMANDO_DIRECTO, req.body, res)
+        if (pedido === null) {
+          return
+        }
+        const valor = pedido.value
 
-      const resultado = await orquestador.transporte.ejecutarComandoDePaso(
-        texto(req.params['robotId']),
-        tipo,
-        { comando: valor, respuestasEsperadas: [100, '1##'] },
-      )
-      if (!resultado.ok) {
-        error(res, 502, resultado.error.tipo)
-        return
-      }
+        const resultado = await orquestador.transporte.ejecutarComandoDePaso(
+          texto(req.params['robotId']),
+          tipo,
+          { comando: valor, respuestasEsperadas: [100, '1##'] },
+        )
+        if (!resultado.ok) {
+          error(res, 502, resultado.error.tipo)
+          return
+        }
 
-      ok(res, 200, { response: { ack: 'DONE', kind: resultado.valor.kind } })
-    })()
-  })
+        ok(res, 200, { response: { ack: 'DONE', kind: resultado.valor.kind } })
+      })()
+    },
+  )
 
   app.get('/api/devices/:robotId/:dispositivo/state', (req: Request, res: Response) => {
     void (async () => {
-      const tipo = texto(req.params['dispositivo']).toUpperCase()
-      if (tipo !== 'CARRO' && tipo !== 'ELEVADOR') {
-        error(res, 400, 'dispositivo debe ser carro o elevador')
+      const tipo = validar(TIPO_DE_DISPOSITIVO, texto(req.params['dispositivo']).toUpperCase(), res)
+      if (tipo === null) {
         return
       }
 
@@ -483,6 +554,48 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
 
   return app
 }
+
+// ------------------------------------------------------------------ esquemas
+//
+// La validacion vive en el borde: lo que pasa de aca ya tiene la forma correcta,
+// asi que el orquestador no repite chequeos ni recibe strings vacios.
+
+const TIPO_DE_DISPOSITIVO = z.enum(['CARRO', 'ELEVADOR'], {
+  message: 'dispositivo debe ser carro o elevador',
+})
+
+const ALTA_DE_ORDEN = z.object({
+  type: z.enum(['PICK', 'PUT'], { message: 'type debe ser PICK o PUT' }).default('PICK'),
+  locationCode: z.string().trim().min(1, 'locationCode es requerido'),
+  targetLocation: z.string().trim().min(1).nullish(),
+  externalOrderId: z.string().trim().min(1).nullish(),
+  // El siteId del body se ignora a proposito: sale de la configuracion del
+  // agente, nunca del request de la tablet.
+  siteId: z.unknown().optional(),
+})
+
+const SIMULACION = z.object({
+  locationCode: z.string().trim().min(1, 'locationCode es requerido'),
+})
+
+const ALTA_DE_DISPOSITIVO = z.object({
+  robotId: z.string().trim().min(1, 'robotId es requerido'),
+  type: TIPO_DE_DISPOSITIVO,
+  host: z.string().trim().min(1, 'host es requerido'),
+  port: z.coerce.number().int().min(1).max(65535).default(502),
+  // Los Festo de planta no usan el unitId 1.
+  unitId: z.coerce.number().int().min(0).max(255).default(255),
+  timeoutMs: z.coerce.number().int().min(1).default(2000),
+})
+
+const COMANDO_DIRECTO = z.object({
+  value: z.coerce.number({ message: 'value debe ser un numero' }),
+})
+
+const RANGO_DE_REPORTE = z.object({
+  startDate: z.coerce.number().int().optional(),
+  endDate: z.coerce.number().int().optional(),
+})
 
 /** Forma que consume el front. Se mantiene la del legacy para no romperlo. */
 function aOrdenDeApi(orden: {
@@ -550,10 +663,3 @@ function texto(valor: unknown, porDefecto = ''): string {
   return porDefecto
 }
 
-function textoOpcional(valor: unknown): string | null {
-  if (typeof valor !== 'string') {
-    return null
-  }
-  const limpio = valor.trim()
-  return limpio === '' ? null : limpio
-}

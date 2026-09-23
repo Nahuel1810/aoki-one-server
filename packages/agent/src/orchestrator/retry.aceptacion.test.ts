@@ -33,6 +33,8 @@ import type { Reloj } from '../reloj.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
 import type { DependenciasDelOrquestador, PuertoDeTransporte } from './ports.js'
 import { reintentarOrden } from './retry.js'
+import { calcularTiempos } from '../persistence/metricsRepository.js'
+import type { MetricsRepository } from '../persistence/metricsRepository.js'
 
 function sinDoble(nombre: string): () => never {
   return () => {
@@ -190,8 +192,27 @@ function crearDoble(): Doble {
     leerRegistros: sinDoble('leerRegistros'),
   }
 
+  // La metrica se registra al terminar la orden (RF24). El doble la acepta y la
+  // guarda: los tests de este archivo no la afirman, pero sin el repositorio el
+  // ciclo no compila.
+  const metricas: MetricsRepository = {
+    registrar: (entrada) =>
+      Promise.resolve({
+        ordenId: entrada.ordenId,
+        siteId: entrada.siteId,
+        origen: entrada.origen,
+        tipo: entrada.tipo,
+        locationCode: entrada.locationCode,
+        ...calcularTiempos(entrada),
+        estado: entrada.estado,
+        creadaEn: entrada.creadaEn,
+        finalizadaEn: entrada.finalizadaEn,
+      }),
+    reporte: sinDoble('metricas.reporte'),
+  }
+
   return {
-    repositorios: { robots, ordenes, pasos, slots, eventos: repositorioDeEventos, dispositivos },
+    repositorios: { robots, ordenes, pasos, slots, eventos: repositorioDeEventos, dispositivos, metricas },
     transporte,
     secuencia,
     ordenes: ordenesPorId,

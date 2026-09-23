@@ -165,7 +165,13 @@ export function parsearLocationCode(codigo: string): Result<UbicacionParseada, E
   }
 
   const [, estanteria, moduloCode, nivelLetra, posicionCruda, sufijoCrudo] = match
-  // La regex ya garantiza que los cinco primeros grupos existen; el sexto es opcional.
+
+  // Guard INALCANZABLE en runtime: si la regex matcheo, los cinco primeros grupos
+  // existen. Esta solo porque noUncheckedIndexedAccess los tipa como
+  // `string | undefined`, y se excluye de la cobertura por eso: ningun test puede
+  // producirlo sin romper la gramatica, y bajar el umbral por una rama que no se
+  // puede ejercitar esconderia las que si.
+  /* v8 ignore start -- guard de tipos, no alcanzable con la gramatica */
   if (
     estanteria === undefined ||
     moduloCode === undefined ||
@@ -174,8 +180,14 @@ export function parsearLocationCode(codigo: string): Result<UbicacionParseada, E
   ) {
     return { ok: false, error: { codigo: 'FORMATO_INVALIDO', recibido: codigo } }
   }
+  /* v8 ignore stop */
 
   const nivelParseado = nivelDesdeLetra(nivelLetra)
+  // Tambien INALCANZABLE desde aca: la regex ya restringe el nivel a [A-L], asi
+  // que nivelDesdeLetra no puede fallar sobre un codigo que matcheo. La rama se
+  // deja porque nivelDesdeLetra SI falla cuando se la llama sola, que es como se
+  // afirma el "Nivel invalido. Debe ser entre A y L" de planta.
+  /* v8 ignore next 3 -- la gramatica ya garantiza el rango */
   if (!nivelParseado.ok) {
     return nivelParseado
   }

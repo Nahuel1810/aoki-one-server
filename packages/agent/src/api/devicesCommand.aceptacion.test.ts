@@ -42,6 +42,9 @@ import type { CuerpoDeRespuesta } from './httpServer.js'
 const SITE_ID = 'SUC-TEST'
 const ROBOT_ID = '1'
 
+/** RF22, segundo nivel: el comando directo a PLC va con token. */
+const TOKEN_DE_MANTENIMIENTO = 'token-de-prueba'
+
 const OPCIONES: OpcionesDelAgente = {
   siteId: SITE_ID,
   rutaDeBase: ':memory:',
@@ -52,6 +55,8 @@ const OPCIONES: OpcionesDelAgente = {
   httpPuerto: 0,
   httpBind: '127.0.0.1',
   zonaDePickeo: [],
+  // RF22: el comando directo a PLC exige token. Configurado, este fixture lo usa.
+  tokenDeMantenimiento: TOKEN_DE_MANTENIMIENTO,
 }
 
 interface RespuestaDeComando {
@@ -158,7 +163,10 @@ describe('API local de dispositivos', () => {
 
       const respuesta = await fetch(urlDe(agente, `/api/devices/${ROBOT_ID}/carro/command`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Aoki-Maintenance-Token': TOKEN_DE_MANTENIMIENTO,
+        },
         // Comando de planta: posicion 1, parante 02, ladoBit 0, accionBit 1.
         body: JSON.stringify({ value: 10201 }),
       })

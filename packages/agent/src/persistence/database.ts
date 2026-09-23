@@ -94,6 +94,24 @@ const ESQUEMA = `
     PRIMARY KEY (orden_id, seq)
   );
 
+  -- RF24. Se separa de orders a proposito: la orden se borra o se purga por
+  -- retencion, la metrica es el historico con el que se mide la operacion.
+  CREATE TABLE IF NOT EXISTS order_metrics (
+    orden_id       TEXT PRIMARY KEY,
+    site_id        TEXT NOT NULL,
+    origen         TEXT NOT NULL,
+    tipo           TEXT NOT NULL,
+    location_code  TEXT NOT NULL,
+    waiting_ms     INTEGER NOT NULL,
+    duration_ms    INTEGER NOT NULL,
+    estado         TEXT NOT NULL,
+    creada_en      INTEGER NOT NULL,
+    finalizada_en  INTEGER NOT NULL
+  );
+  -- El reporte filtra por fecha de finalizacion: sale por indice, no por scan.
+  CREATE INDEX IF NOT EXISTS order_metrics_finalizada
+    ON order_metrics (finalizada_en);
+
   CREATE TABLE IF NOT EXISTS events (
     id             TEXT PRIMARY KEY,
     ts             INTEGER NOT NULL,

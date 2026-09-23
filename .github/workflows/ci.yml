@@ -43,7 +43,10 @@ jobs:
       - name: Formato (Prettier)
         run: npm run format:check
 
-      - name: Tests de los paquetes TS (vitest + cobertura)
+      # Corre con cobertura porque el umbral de packages/domain es un gate: T24 pide
+      # cobertura completa del dominio y bajar de 100% tiene que romper el pipeline,
+      # no pasar desapercibido.
+      - name: Tests de los paquetes TS (vitest + umbral de cobertura)
         run: npm run test:packages:coverage
 
       # Suite de aceptacion: el contrato portado del servidor legacy. Ya esta en verde,

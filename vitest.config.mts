@@ -23,6 +23,27 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
+      // T24 pide cobertura completa de `domain`, y el umbral es lo que hace que
+      // "completa" siga significando algo dentro de seis meses: bajar de ahi
+      // rompe el pipeline en vez de pasar desapercibido.
+      //
+      // Es 100% real, no negociado: las dos unicas ramas que no se pueden
+      // ejercitar —guards que existen solo porque noUncheckedIndexedAccess tipa
+      // los grupos de la regex como `string | undefined`— estan excluidas con
+      // `v8 ignore` y su razon escrita al lado.
+      //
+      // El resto de los paquetes NO tiene umbral todavia: el agente y el
+      // servidor se cubren con la suite de aceptacion y con los tests que entren
+      // con cada task, y poner un numero alto ahora obligaria a inventar tests de
+      // cableado en vez de tests de comportamiento.
+      thresholds: {
+        'packages/domain/src/**/*.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+      },
     },
   },
 })

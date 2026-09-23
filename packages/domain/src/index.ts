@@ -9,7 +9,6 @@
 // verde.
 
 export * from './result.js'
-export * from './noImplementado.js'
 export * from './locationCode.js'
 export * from './plcProtocol.js'
 export * from './orderSteps.js'

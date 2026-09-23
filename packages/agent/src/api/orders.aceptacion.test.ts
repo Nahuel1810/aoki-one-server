@@ -26,6 +26,9 @@ const OPCIONES: OpcionesDelAgente = {
   httpPuerto: 0,
   httpBind: '127.0.0.1',
   zonaDePickeo: ['3X02AE1', '3X02AE2'],
+  // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
+  // Este fixture no lo usa, asi que va en null a proposito.
+  tokenDeMantenimiento: null,
 }
 
 interface ItemDeCola {
