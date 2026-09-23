@@ -14,8 +14,14 @@ import { PACKAGE_NAME } from '@aoki-one/domain'
 
 // Superficie publica del paquete: el contrato de ingreso idempotente de pedidos
 // (RF26) y su puerto de persistencia. Es lo unico declarado en esta fase.
+export * from './api/hmac.js'
+export * from './api/httpServer.js'
 export * from './api/ordersIngest.js'
+export * from './composition.js'
+export * from './persistence/credentialsRepository.js'
+export * from './persistence/database.js'
 export * from './persistence/ordersRepository.js'
+export * from './persistence/sqliteOrdersRepository.js'
 
 /** Nombre del paquete. Sirve para trazas y diagnosticos. */
 export const PACKAGE_NAME_SERVER = '@aoki-one/server'

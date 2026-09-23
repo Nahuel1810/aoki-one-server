@@ -437,11 +437,11 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 
 ### Servidor de pedidos (Linux propio)
 
-- [ ] **T32** `server`: andamiaje, esquema SQLite, migraciones y repositorios por entidad.
-- [ ] **T33** `server`: ingreso de pedidos con HMAC + timestamp, validación de `siteId` y dedupe idempotente (RF26).
-- [ ] **T34** `server`: cola durable, entrega por long-poll con lease y re-entrega por vencimiento (RF27, RF28).
-- [ ] **T35** `server`: reporte de transiciones idempotente por secuencia (RF29) y consulta de estado para picking (RF30).
-- [ ] **T36** `server`: credenciales por sucursal, heartbeat, presencia y `/health` (RF31, RF32).
+- [x] **T32** `server`: andamiaje, esquema SQLite, migraciones y repositorios por entidad.
+- [x] **T33** `server`: ingreso de pedidos con HMAC + timestamp, validación de `siteId` y dedupe idempotente (RF26).
+- [x] **T34** `server`: cola durable, entrega por long-poll con lease y re-entrega por vencimiento (RF27, RF28).
+- [x] **T35** `server`: reporte de transiciones idempotente por secuencia (RF29) y consulta de estado para picking (RF30).
+- [x] **T36** `server`: credenciales por sucursal, heartbeat, presencia y `/health` (RF31, RF32).
 - [ ] **T37** `server`: despliegue en el Linux — TLS, servicio, logs, retención y purga.
 
 ### Integración, pruebas y cutover
