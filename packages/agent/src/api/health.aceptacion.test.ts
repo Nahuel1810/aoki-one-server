@@ -33,6 +33,7 @@ interface DatosDeHealth {
 
 const OPCIONES_SIMULADAS: OpcionesDelAgente = {
   siteId: 'SUC-TEST',
+  agentId: 'AG-TEST',
   rutaDeBase: ':memory:',
   montarApi: true,
   // RF20: explicito. El default es false y arrancar sin configuracion no simula.
@@ -45,6 +46,9 @@ const OPCIONES_SIMULADAS: OpcionesDelAgente = {
   // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
   // Este fixture no lo usa, asi que va en null a proposito.
   tokenDeMantenimiento: null,
+  // RF36/T26: el enlace con el servidor va APAGADO. Estos fixtures ejercitan el
+  // agente solo con su cola local, que es como arranca en el cutover.
+  enlace: null,
 }
 
 async function levantarAgente(opciones: OpcionesDelAgente): Promise<Agente> {

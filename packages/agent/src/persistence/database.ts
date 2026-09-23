@@ -122,6 +122,60 @@ const ESQUEMA = `
     metadata_json  TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS events_entidad ON events (tipo_entidad, entidad_id, ts);
+
+  -- RF34. Toda transicion de orden se encola aca antes de intentar reportarla:
+  -- si el enlace esta caido se acumula y se drena al reconectar, en orden.
+  -- El id es autoincremental porque el drenado tiene que respetar el orden de
+  -- encolado, y creada_en no alcanza: dos transiciones del mismo milisegundo
+  -- empatan y el empate es justo el caso peligroso.
+  --
+  -- en_vuelo marca la fila que un drenado ya se llevo. Sin esa marca, dos
+  -- drenados solapados leen las MISMAS filas y las reportan las dos: el servidor
+  -- recibe la misma seq dos veces y, peor, las puede recibir fuera de orden.
+  CREATE TABLE IF NOT EXISTS outbox (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    orden_id      TEXT NOT NULL,
+    seq           INTEGER NOT NULL,
+    payload_json  TEXT NOT NULL,
+    creada_en     INTEGER NOT NULL,
+    intentos      INTEGER NOT NULL DEFAULT 0,
+    ultimo_error  TEXT,
+    en_vuelo      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (orden_id, seq)
+  );
+
+  -- RF34. La cola muerta: transiciones que el servidor rechaza de una forma que
+  -- reintentar no arregla (un 400 por payload, por ejemplo). Se archivan en vez
+  -- de borrarse, porque son el cambio de estado que la app de picking nunca va a
+  -- ver y alguien tiene que poder reconstruir cual fue. Sin esta tabla una sola
+  -- fila mala bloquea la cola de por vida y la sucursal deja de reportar.
+  CREATE TABLE IF NOT EXISTS outbox_muertas (
+    id            INTEGER PRIMARY KEY,
+    orden_id      TEXT NOT NULL,
+    seq           INTEGER NOT NULL,
+    payload_json  TEXT NOT NULL,
+    creada_en     INTEGER NOT NULL,
+    intentos      INTEGER NOT NULL,
+    ultimo_error  TEXT,
+    muerta_en     INTEGER NOT NULL
+  );
+
+  -- Lo que el agente sabe del OTRO libro, el del servidor (RF33, RF34, RF35).
+  --
+  -- ultima_seq vive aca y no en outbox porque la fila del outbox se borra al
+  -- confirmarse: si la seq se derivara de MAX(seq) sobre lo pendiente, despues de
+  -- un drenado completo volveria a empezar en 1 y el servidor descartaria como
+  -- SEQ_VIEJA transiciones que son nuevas.
+  --
+  -- orden_id_remoto es el id con el que el servidor conoce la orden, distinto
+  -- del id local. Para una orden de picking llega con el reclamo; para una orden
+  -- local (RF35) recien se sabe cuando se la empuja al reconectar, y hasta
+  -- entonces es NULL.
+  CREATE TABLE IF NOT EXISTS sync_ordenes (
+    orden_id         TEXT PRIMARY KEY,
+    orden_id_remoto  TEXT,
+    ultima_seq       INTEGER NOT NULL DEFAULT 0
+  );
 `
 
 export function abrirBase(ruta: string): BaseDelAgente {

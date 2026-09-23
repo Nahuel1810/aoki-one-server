@@ -7,22 +7,48 @@
 import { describe, expect, it } from 'vitest'
 
 import { firmar } from '../api/hmac.js'
-import {
-  HEADER_FIRMA,
-  HEADER_KEY_ID,
-  HEADER_SECRETO_DE_AGENTE,
-  HEADER_TIMESTAMP,
-} from '../api/httpServer.js'
+import { HEADER_FIRMA, HEADER_KEY_ID, HEADER_TIMESTAMP } from '../api/httpServer.js'
 import { crearServidor, type Servidor } from '../composition.js'
+import { generarClaveDeCifrado, VARIABLE_DE_CLAVE } from '../persistence/cifrado.js'
 
 const SITE_ID = 'SUC-1'
 const KEY_ID = 'key-suc-1'
 const SECRETO = 'secreto-de-prueba'
 const AGENT_ID = 'agente-1'
 
+/** Entorno del servidor. Sin la clave de cifrado no arranca, y eso se afirma aparte. */
+const ENTORNO = { [VARIABLE_DE_CLAVE]: generarClaveDeCifrado() }
+
+interface Sobre {
+  readonly headers: Record<string, string>
+  readonly body: string
+}
+
+/**
+ * Request firmada, como la manda cualquier cliente legitimo.
+ *
+ * No hay header de secreto: el servidor resuelve el secreto por keyId desde su
+ * propio almacen y recomputa la firma. Es el mismo sobre para la app de picking
+ * y para el agente.
+ */
+function firmada(cuerpo: unknown, secreto = SECRETO, keyId = KEY_ID): Sobre {
+  const body = JSON.stringify(cuerpo)
+  const ahora = Date.now()
+  return {
+    headers: {
+      'Content-Type': 'application/json',
+      [HEADER_KEY_ID]: keyId,
+      [HEADER_TIMESTAMP]: String(ahora),
+      [HEADER_FIRMA]: firmar(secreto, ahora, body),
+    },
+    body,
+  }
+}
+
 async function levantar(): Promise<{ servidor: Servidor; base: string }> {
   const servidor = crearServidor({
     rutaDeBase: ':memory:',
+    entorno: ENTORNO,
     // Puerto 0: lo asigna el sistema. Uno fijo es EADDRINUSE en CI.
     httpPuerto: 0,
     httpBind: '127.0.0.1',
@@ -50,39 +76,41 @@ async function leer(respuesta: Response): Promise<Respuesta> {
 
 /** Alta firmada, como la manda la app de picking. */
 async function altaDePedido(base: string, externalOrderId: string): Promise<Respuesta> {
-  const cuerpo = JSON.stringify({
+  const sobre = firmada({
     siteId: SITE_ID,
     externalOrderId,
     tipo: 'PICK',
     locationCode: '3X04AE1',
   })
-  const ahora = Date.now()
 
   return leer(
     await fetch(`${base}/api/v1/orders`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [HEADER_KEY_ID]: KEY_ID,
-        [HEADER_SECRETO_DE_AGENTE]: SECRETO,
-        [HEADER_TIMESTAMP]: String(ahora),
-        [HEADER_FIRMA]: firmar(SECRETO, ahora, cuerpo),
-      },
-      body: cuerpo,
+      headers: sobre.headers,
+      body: sobre.body,
     }),
   )
 }
 
-function comoAgente(base: string, ruta: string, cuerpo: unknown): Promise<Response> {
+/**
+ * Consulta firmada. En un GET no hay body, asi que lo que se firma es la RUTA:
+ * eso ata la firma al recurso y evita que una firma sirva para leer otro pedido.
+ */
+function consultar(base: string, externalOrderId: string, firmandoRuta?: string): Promise<Response> {
+  const ruta = `/api/v1/orders/${externalOrderId}`
+  const ahora = Date.now()
   return fetch(`${base}${ruta}`, {
-    method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       [HEADER_KEY_ID]: KEY_ID,
-      [HEADER_SECRETO_DE_AGENTE]: SECRETO,
+      [HEADER_TIMESTAMP]: String(ahora),
+      [HEADER_FIRMA]: firmar(SECRETO, ahora, firmandoRuta ?? ruta),
     },
-    body: JSON.stringify(cuerpo),
   })
+}
+
+function comoAgente(base: string, ruta: string, cuerpo: unknown): Promise<Response> {
+  const sobre = firmada(cuerpo)
+  return fetch(`${base}${ruta}`, { method: 'POST', headers: sobre.headers, body: sobre.body })
 }
 
 describe('e2e del servidor de pedidos', () => {
@@ -147,9 +175,7 @@ describe('e2e del servidor de pedidos', () => {
       expect(repetido.status).toBe(200)
 
       // --- La app de picking consulta el estado ---
-      const consulta = await leer(
-        await fetch(`${base}/api/v1/orders/pedido-1`, { headers: { [HEADER_KEY_ID]: KEY_ID } }),
-      )
+      const consulta = await leer(await consultar(base, 'pedido-1'))
       expect(consulta.status).toBe(200)
       expect((consulta.cuerpo['data'] as Record<string, unknown>)['estado']).toBe('DONE')
 
@@ -172,6 +198,31 @@ describe('e2e del servidor de pedidos', () => {
       // Recien latio: no esta caida. RF31 pide que se diga siempre, no solo cuando falla.
       expect(sitios[0]?.['caida']).toBe(false)
       expect(sitios[0]?.['pendientes']).toBe(0)
+    } finally {
+      await servidor.detener()
+    }
+  })
+
+  it('la consulta de estado exige firma, y la firma queda atada al pedido', async () => {
+    const { servidor, base } = await levantar()
+
+    try {
+      await altaDePedido(base, 'pedido-a')
+      await altaDePedido(base, 'pedido-b')
+
+      // Un keyId es un identificador, no un secreto: sin firma no alcanza.
+      const sinFirma = await fetch(`${base}/api/v1/orders/pedido-a`, {
+        headers: { [HEADER_KEY_ID]: KEY_ID },
+      })
+      expect(sinFirma.status).toBe(401)
+
+      // Firmada para su propia ruta: pasa.
+      expect((await consultar(base, 'pedido-a')).status).toBe(200)
+
+      // La firma de pedido-a NO sirve para leer pedido-b. Sin atar la firma a la
+      // ruta, una sola consulta legitima abriria toda la sucursal.
+      const reusada = await consultar(base, 'pedido-b', '/api/v1/orders/pedido-a')
+      expect(reusada.status).toBe(401)
     } finally {
       await servidor.detener()
     }
@@ -211,11 +262,7 @@ describe('e2e del servidor de pedidos', () => {
       const sinFirma = await leer(
         await fetch(`${base}/api/v1/orders`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            [HEADER_KEY_ID]: KEY_ID,
-            [HEADER_SECRETO_DE_AGENTE]: SECRETO,
-          },
+          headers: { 'Content-Type': 'application/json', [HEADER_KEY_ID]: KEY_ID },
           body: cuerpo,
         }),
       )
@@ -227,7 +274,6 @@ describe('e2e del servidor de pedidos', () => {
           headers: {
             'Content-Type': 'application/json',
             [HEADER_KEY_ID]: KEY_ID,
-            [HEADER_SECRETO_DE_AGENTE]: SECRETO,
             [HEADER_TIMESTAMP]: String(Date.now()),
             [HEADER_FIRMA]: 'a'.repeat(64),
           },
@@ -244,26 +290,20 @@ describe('e2e del servidor de pedidos', () => {
     const { servidor, base } = await levantar()
 
     try {
-      // La credencial es de SUC-1 y el body dice SUC-2.
-      const cuerpo = JSON.stringify({
+      // La credencial es de SUC-1 y el body dice SUC-2. La firma es VALIDA: lo
+      // que rechaza no es la autenticacion sino la autorizacion.
+      const sobre = firmada({
         siteId: 'SUC-2',
         externalOrderId: 'p-ajeno',
         tipo: 'PICK',
         locationCode: '3X04AE1',
       })
-      const ahora = Date.now()
 
       const respuesta = await leer(
         await fetch(`${base}/api/v1/orders`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            [HEADER_KEY_ID]: KEY_ID,
-            [HEADER_SECRETO_DE_AGENTE]: SECRETO,
-            [HEADER_TIMESTAMP]: String(ahora),
-            [HEADER_FIRMA]: firmar(SECRETO, ahora, cuerpo),
-          },
-          body: cuerpo,
+          headers: sobre.headers,
+          body: sobre.body,
         }),
       )
 

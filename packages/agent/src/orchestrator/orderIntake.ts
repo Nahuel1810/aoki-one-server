@@ -41,11 +41,23 @@ export type ErrorDeAdmision =
   /** No hay fila en `robots` para esa estanteria: ya no existe el fallback identidad. */
   | { readonly codigo: 'ROBOT_NO_REGISTRADO'; readonly estanteriaCode: string }
 
+/**
+ * Id externo de una orden que nace en el agente (RF35).
+ *
+ * El prefijo por agente es lo que evita chocar con los ids que maneja la app de
+ * picking. Una colision no falla ruidosamente: dedupea dos ordenes distintas en
+ * una sola y deja un pedido sin atender, asi que se previene por construccion y
+ * no por suerte.
+ */
+export function externalOrderIdLocal(agentId: string, id: string): string {
+  return `local-${agentId}-${id}`
+}
+
 export async function admitirOrden(
   dependencias: DependenciasDelOrquestador,
   pedido: PedidoDeAltaDeOrden,
 ): Promise<Result<ResultadoDeAdmision, ErrorDeAdmision>> {
-  const { repositorios, siteId, generarId, reloj } = dependencias
+  const { repositorios, siteId, agentId, generarId, reloj } = dependencias
 
   // La accion se deriva del tipo de orden (PICK/PUT), nunca viaja en la ubicacion.
   if (tieneSufijoDeAccion(pedido.locationCode)) {
@@ -96,9 +108,9 @@ export async function admitirOrden(
     siteId,
     robotId,
     // RF35: una orden que nace en el agente lleva su propio id externo, asi puede
-    // empujarse al servidor cuando vuelva el enlace. El prefijo por agente que
-    // evita colisionar con los ids de picking entra con T30.
-    externalOrderId: pedido.externalOrderId ?? generarId(),
+    // empujarse al servidor cuando vuelva el enlace, y prefijado por agente para
+    // no colisionar con los ids de picking.
+    externalOrderId: pedido.externalOrderId ?? externalOrderIdLocal(agentId, generarId()),
     tipo: pedido.tipo,
     origen: pedido.origen,
     estado: 'PENDING',

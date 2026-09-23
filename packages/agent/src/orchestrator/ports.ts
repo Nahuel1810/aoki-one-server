@@ -8,6 +8,7 @@ import type { Result, TipoDispositivo } from '@aoki-one/domain'
 
 import type { RepositoriosDelAgente } from '../persistence/index.js'
 import type { Reloj } from '../reloj.js'
+import type { OutboxDeTransiciones } from '../sync/outbox.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
 import type {
   PedidoDeComando,
@@ -54,6 +55,22 @@ export interface DependenciasDelOrquestador extends DependenciasDePaso {
   readonly repositorios: RepositoriosDelAgente
   /** Sale de la configuracion del agente, nunca del request de la tablet. */
   readonly siteId: string
+  /**
+   * Identidad de este agente dentro de la sucursal.
+   *
+   * Es lo que prefija el `externalOrderId` de las ordenes locales (RF35): sin
+   * prefijo, una colision con un id de picking no falla ruidosamente, dedupea
+   * dos ordenes distintas en una y deja un pedido sin atender.
+   */
+  readonly agentId: string
   /** Generador de ids. Se inyecta: la logica no llama a `randomUUID` directo (RNF). */
   readonly generarId: () => string
+  /**
+   * Cola de salida de transiciones (RF34).
+   *
+   * Ausente = enlace APAGADO, que es el modo del cutover (T26): el agente corre
+   * solo con su cola local y no hay a quien reportarle. Encolar ahi solo haria
+   * crecer una cola que nadie drena.
+   */
+  readonly outbox?: OutboxDeTransiciones
 }

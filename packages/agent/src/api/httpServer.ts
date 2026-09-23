@@ -32,6 +32,7 @@ import { z } from 'zod'
 import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador } from '../orchestrator/ports.js'
 import { reintentarOrden } from '../orchestrator/retry.js'
+import { ENLACE_APAGADO, type ReporteDeEnlace } from '../sync/link.js'
 
 export type CuerpoDeRespuesta<T> =
   | { readonly ok: true; readonly data: T; readonly created?: boolean }
@@ -50,6 +51,14 @@ export interface DependenciasDeApi {
    * esperaria al tick de seguridad, que a proposito es de baja frecuencia.
    */
   readonly despertar: () => void
+  /**
+   * Estado del enlace con el servidor (RF36).
+   *
+   * Ausente = enlace no configurado, y entonces `/health` responde `DISABLED`.
+   * Es una respuesta, no un hueco: el front tiene que poder distinguir "no hay
+   * enlace porque no se configuro" de "se configuro y esta caido".
+   */
+  readonly enlace?: () => Promise<ReporteDeEnlace>
 }
 
 export interface DireccionDeEscucha {
@@ -92,7 +101,7 @@ export function crearServidorHttp(dependencias: DependenciasDeApi): ServidorHttp
 }
 
 function construirApp(dependencias: DependenciasDeApi): express.Express {
-  const { orquestador, simularPlc, despertar, tokenDeMantenimiento } = dependencias
+  const { orquestador, simularPlc, despertar, tokenDeMantenimiento, enlace } = dependencias
   const { repositorios, siteId } = orquestador
   const arrancadoEn = orquestador.reloj.ahoraMs()
 
@@ -130,6 +139,34 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   }
 
   /**
+   * Corre un handler asincrono y contiene lo que se le escape.
+   *
+   * Express 4 no mira la promesa que devuelve un handler, asi que un rechazo no
+   * es un error de request: es un unhandled rejection, y Node baja el proceso
+   * ENTERO del agente. Un SQLITE_BUSY, un disco lleno o una base bloqueada en UNA
+   * consulta de la tablet dejaban al robot sin quien lo maneje, y encima la
+   * request se quedaba colgada sin respuesta ni timeout. Es el mismo criterio que
+   * `asincrono` del servidor; aca no hay middleware de error porque los handlers
+   * se registran con su forma propia y el unico canal de salida es este.
+   */
+  function atender(res: Response, handler: () => Promise<void>): void {
+    handler().catch((causa: unknown) => {
+      // Un 500 sin rastro es indebuggeable: el detalle no sale en la respuesta a
+      // proposito, asi que el unico lugar donde queda es el log del agente.
+      console.error('[agente] fallo no controlado en una request:', causa)
+
+      if (res.headersSent) {
+        // Ya se empezo a escribir la respuesta: cambiarle el status es imposible
+        // y agregarle otro cuerpo le daria a la tablet un JSON corrupto. Se corta
+        // la conexion para que lo lea como lo que es, una respuesta incompleta.
+        res.destroy()
+        return
+      }
+      error(res, 500, 'error interno del agente')
+    })
+  }
+
+  /**
    * Valida el cuerpo contra su esquema y responde 400 con el motivo si no pasa.
    * Devuelve `null` cuando ya respondio, para que el handler corte.
    */
@@ -155,7 +192,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // { ok, data } de toda la API, y el chequeo de infraestructura lee la raiz sin
   // saber del envelope. Duplicarlos es mas barato que romper a uno de los dos.
   app.get('/health', (_req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
 
       const dispositivos = (
@@ -202,17 +239,19 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         lastCompletedOrder:
           ultima === undefined ? null : { id: ultima.id, finishedAt: ultima.finalizadaEn },
         // RF36: sin modo silencioso. El enlace con el servidor se informa siempre,
-        // aunque en fase 1 todavia no exista: 'DISABLED' es una respuesta, no un hueco.
-        link: { status: 'DISABLED', lastContactAt: null, outboxSize: 0 },
+        // y cuando esta configurado se informa de verdad: si el servidor no
+        // contesta, el operario ve DEGRADED y el tamaño de lo que quedo sin
+        // reportar, no una pantalla que finge estar al dia.
+        link: enlace === undefined ? ENLACE_APAGADO : await enlace(),
       }
 
       res.status(200).json({ ok: true, data: datos, ...datos })
-    })()
+    })
   })
 
   // ---------------------------------------------------------------- ordenes
   app.post('/api/orders', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const pedido = validar(ALTA_DE_ORDEN, req.body, res)
       if (pedido === null) {
         return
@@ -245,26 +284,26 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       if (creada) {
         despertar()
       }
-    })()
+    })
   })
 
   app.get('/api/orders', (_req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const ordenes = await repositorios.ordenes.listar({ siteId })
       ok(res, 200, ordenes.map(aOrdenDeApi))
-    })()
+    })
   })
 
   // Va ANTES de /api/orders/:id para que no lo capture el parametro.
   app.get('/api/orders/queue/status', (_req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
       ok(res, 200, await Promise.all(robots.map((robot) => snapshotDeCola(robot.id))))
-    })()
+    })
   })
 
   app.post('/api/orders/simulate', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const pedido = validar(SIMULACION, req.body, res)
       if (pedido === null) {
         return
@@ -315,12 +354,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           { seq: 5, deviceType: 'CARRO', commandCode: devolver.valor.codigo },
         ],
       })
-    })()
+    })
   })
 
   // RF24. Va antes de /api/orders/:id: son dos segmentos y el parametro captura uno.
   app.get('/api/orders/metrics/report', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const rango = validar(RANGO_DE_REPORTE, req.query, res)
       if (rango === null) {
         return
@@ -339,34 +378,34 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         ...(rango.endDate === undefined ? {} : { hastaMs: rango.endDate }),
       })
       ok(res, 200, reporte)
-    })()
+    })
   })
 
   app.post('/api/orders/:id/retry', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const resultado = await reintentarOrden(orquestador, texto(req.params['id']))
       if (!resultado.ok) {
         error(res, 400, resultado.error.codigo)
         return
       }
       ok(res, 200, aOrdenDeApi(resultado.valor))
-    })()
+    })
   })
 
   app.get('/api/orders/:id', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const orden = await repositorios.ordenes.buscarPorId(texto(req.params['id']))
       if (orden === undefined) {
         error(res, 404, 'ORDEN_INEXISTENTE')
         return
       }
       ok(res, 200, aOrdenDeApi(orden))
-    })()
+    })
   })
 
   // ---------------------------------------------------------------- slots
   app.get('/api/slots', (_req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
       const zonas = await Promise.all(
         robots.map(async (robot) => repositorios.slots.listarPorRobot(robot.id)),
@@ -391,11 +430,11 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
               : null,
         })),
       )
-    })()
+    })
   })
 
   app.post('/api/slots/:locationCode/release', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const locationCode = texto(req.params['locationCode'])
       const robots = await repositorios.robots.listar(siteId)
 
@@ -429,12 +468,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       }
 
       error(res, 404, 'SLOT_INEXISTENTE')
-    })()
+    })
   })
 
   // ---------------------------------------------------------------- dispositivos
   app.post('/api/devices/register', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const alta = validar(ALTA_DE_DISPOSITIVO, req.body, res)
       if (alta === null) {
         return
@@ -450,11 +489,11 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       })
 
       ok(res, 201, dispositivo)
-    })()
+    })
   })
 
   app.get('/api/devices/robots', (_req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
       ok(
         res,
@@ -471,14 +510,14 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           })),
         ),
       )
-    })()
+    })
   })
 
   app.post(
     '/api/devices/:robotId/:dispositivo/command',
     exigirMantenimiento,
     (req: Request, res: Response) => {
-      void (async () => {
+      atender(res, async () => {
         const tipo = validar(TIPO_DE_DISPOSITIVO, texto(req.params['dispositivo']).toUpperCase(), res)
         if (tipo === null) {
           return
@@ -501,12 +540,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         }
 
         ok(res, 200, { response: { ack: 'DONE', kind: resultado.valor.kind } })
-      })()
+      })
     },
   )
 
   app.get('/api/devices/:robotId/:dispositivo/state', (req: Request, res: Response) => {
-    void (async () => {
+    atender(res, async () => {
       const tipo = validar(TIPO_DE_DISPOSITIVO, texto(req.params['dispositivo']).toUpperCase(), res)
       if (tipo === null) {
         return
@@ -522,7 +561,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       }
 
       ok(res, 200, { type: tipo, values: registros.valor, simulated: simularPlc })
-    })()
+    })
   })
 
   app.use((_req: Request, res: Response) => {

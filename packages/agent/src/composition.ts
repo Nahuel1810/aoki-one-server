@@ -7,17 +7,39 @@
 import { randomUUID } from 'node:crypto'
 
 import { crearServidorHttp } from './api/httpServer.js'
+import { rehidratar } from './orchestrator/rehydrate.js'
 import { ejecutarCicloDeRobot } from './orchestrator/robotLoop.js'
 import type { DireccionDeEscucha, ServidorHttp } from './api/httpServer.js'
 import type { DependenciasDelOrquestador } from './orchestrator/ports.js'
 import { abrirBase } from './persistence/database.js'
 import { crearRepositorios } from './persistence/index.js'
 import { crearRelojDelSistema } from './reloj.js'
+import { BACKOFF_DEL_ENLACE, crearAzarDelSistema } from './sync/backoff.js'
+import { crearEnlace, OPCIONES_DE_ENLACE_POR_DEFECTO, type Enlace } from './sync/link.js'
+import { crearOrigenPorLongPoll } from './sync/orderSource.js'
+import { crearOutboxSqlite } from './sync/outbox.js'
+import { crearClienteHttp, TIEMPOS_DEL_CLIENTE_POR_DEFECTO } from './sync/serverClient.js'
 import { crearDeviceMutex } from './transport/deviceMutex.js'
 import { crearPuertoDeTransporte } from './transport/transportePort.js'
 
+/**
+ * Enlace con el servidor de pedidos (RF28, RF32).
+ *
+ * Es un objeto aparte porque o esta entero o no esta: media configuracion de
+ * enlace (URL sin credencial) no es un enlace degradado, es un error de
+ * despliegue, y el tipo lo vuelve imposible de expresar.
+ */
+export interface OpcionesDeEnlaceDelAgente {
+  /** Base del servidor, sin barra final. */
+  readonly urlBase: string
+  readonly keyId: string
+  readonly secreto: string
+}
+
 export interface OpcionesDelAgente {
   readonly siteId: string
+  /** Identidad de este agente. Prefija el id externo de las ordenes locales (RF35). */
+  readonly agentId: string
   readonly rutaDeBase: string
   readonly montarApi: boolean
   readonly simularPlc: boolean
@@ -33,6 +55,13 @@ export interface OpcionesDelAgente {
    * habilitarlo en silencio. Mismo criterio que RF20 con la simulacion.
    */
   readonly tokenDeMantenimiento: string | null
+  /**
+   * `null` = enlace APAGADO, y es el modo del cutover (T26): el agente corre
+   * primero sin servidor, solo con su cola local. Mismo criterio que RF20 con la
+   * simulacion y que RF22 con el token: arrancar sin configurar no puede
+   * conectarse a nada en silencio.
+   */
+  readonly enlace: OpcionesDeEnlaceDelAgente | null
 }
 
 export interface Agente {
@@ -41,6 +70,8 @@ export interface Agente {
   readonly api: ServidorHttp | null
   readonly direccion: () => DireccionDeEscucha | null
   readonly orquestador: DependenciasDelOrquestador
+  /** `null` con el enlace apagado. Expuesto para diagnostico y para los tests. */
+  readonly enlace: Enlace | null
 }
 
 /**
@@ -80,14 +111,20 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     buscarDispositivo: (robotId, tipo) => repositorios.dispositivos.buscar(robotId, tipo),
   })
 
+  // El outbox existe solo si hay enlace: una cola de salida que nadie drena solo
+  // crece (RF34).
+  const outbox = opciones.enlace === null ? null : crearOutboxSqlite(base)
+
   const orquestador: DependenciasDelOrquestador = {
     repositorios,
     siteId: opciones.siteId,
+    agentId: opciones.agentId,
     // Se inyecta: la logica no llama a randomUUID directo (RNF de Calidad).
     generarId: () => randomUUID(),
     transporte,
     reloj,
     politica: POLITICA_DE_REINTENTOS,
+    ...(outbox === null ? {} : { outbox }),
   }
 
   let corriendo = false
@@ -138,12 +175,41 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     }
   }
 
+  const configuracionDeEnlace = opciones.enlace
+  const enlace =
+    configuracionDeEnlace === null || outbox === null
+      ? null
+      : (() => {
+          const cliente = crearClienteHttp({
+            urlBase: configuracionDeEnlace.urlBase,
+            siteId: opciones.siteId,
+            agentId: opciones.agentId,
+            credencial: {
+              keyId: configuracionDeEnlace.keyId,
+              secreto: configuracionDeEnlace.secreto,
+            },
+            tiempos: TIEMPOS_DEL_CLIENTE_POR_DEFECTO,
+            pedir: fetch,
+            ahoraMs: () => reloj.ahoraMs(),
+          })
+          return crearEnlace({
+            origen: crearOrigenPorLongPoll(cliente),
+            cliente,
+            outbox,
+            orquestador,
+            azar: crearAzarDelSistema(),
+            opciones: { ...OPCIONES_DE_ENLACE_POR_DEFECTO, backoff: BACKOFF_DEL_ENLACE },
+            despertar,
+          })
+        })()
+
   const api = opciones.montarApi
     ? crearServidorHttp({
         orquestador,
         simularPlc: opciones.simularPlc,
         despertar,
         tokenDeMantenimiento: opciones.tokenDeMantenimiento,
+        ...(enlace === null ? {} : { enlace: () => enlace.estado() }),
       })
     : null
 
@@ -154,6 +220,7 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     api,
     direccion: () => direccion,
     orquestador,
+    enlace,
 
     iniciar: async () => {
       // La zona de pickeo se siembra para cada robot dado de alta. Es idempotente:
@@ -163,15 +230,28 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
         await repositorios.slots.sembrarZonaDePickeo(robot.id, opciones.zonaDePickeo)
       }
 
+      // RF15: se reconcilia ANTES de arrancar el bucle y el enlace. Un reinicio a
+      // mitad de maniobra deja la orden en IN_PROGRESS y el robot con esa orden
+      // activa, y el ciclo del robot solo toma PENDING: sin esto la orden queda
+      // huerfana y el robot ocupado para siempre. Pedir trabajo nuevo antes de
+      // reconciliar seria encima acumular encima de lo que quedo a medias.
+      await rehidratar(orquestador)
+
       if (api !== null) {
         direccion = await api.escuchar(opciones.httpPuerto, opciones.httpBind)
       }
 
       corriendo = true
       bucleTerminado = bucle()
+      // El enlace arranca DESPUES del loop: primero el agente queda en
+      // condiciones de ejecutar, y recien ahi se le empieza a entregar trabajo.
+      enlace?.iniciar()
     },
 
     detener: async () => {
+      if (enlace !== null) {
+        await enlace.detener()
+      }
       corriendo = false
       despertar()
       await bucleTerminado

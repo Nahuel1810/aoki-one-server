@@ -226,6 +226,9 @@ const RELOJ: Reloj = {
   dormir: () => Promise.resolve(),
 }
 
+/** RF35: el prefijo del id externo local sale de la identidad del agente. */
+const AGENT_ID = 'AG-TEST'
+
 function dependencias(repositorios: RepositoriosDelAgente): DependenciasDelOrquestador {
   return {
     transporte: TRANSPORTE_SIN_USO,
@@ -233,6 +236,7 @@ function dependencias(repositorios: RepositoriosDelAgente): DependenciasDelOrque
     politica: { maxIntentos: 3, baseBackoffMs: 10 },
     repositorios,
     siteId: SITE_ID,
+    agentId: AGENT_ID,
     generarId: () => 'ev-1',
   }
 }

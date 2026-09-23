@@ -19,6 +19,7 @@ const ESTANTERIA = '3X'
 
 const OPCIONES: OpcionesDelAgente = {
   siteId: SITE_ID,
+  agentId: 'AG-TEST',
   rutaDeBase: ':memory:',
   montarApi: true,
   // RF20: el default es false, asi que la simulacion se pide explicita.
@@ -29,6 +30,9 @@ const OPCIONES: OpcionesDelAgente = {
   // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
   // Este fixture no lo usa, asi que va en null a proposito.
   tokenDeMantenimiento: null,
+  // RF36/T26: el enlace con el servidor va APAGADO. Estos fixtures ejercitan el
+  // agente solo con su cola local, que es como arranca en el cutover.
+  enlace: null,
 }
 
 interface ItemDeCola {

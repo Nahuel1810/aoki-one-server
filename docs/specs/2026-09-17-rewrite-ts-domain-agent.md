@@ -430,10 +430,10 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 - [x] **T19** `agent`: API HTTP local con validación zod, bind a la interfaz de LAN y token de mantenimiento para el comando directo a PLC (RF21, RF22).
 - [x] **T20** `agent`: métricas y `/health` profundo, incluido el estado del enlace (RF24, RF25).
 - [ ] **T21** `agent`: logs estructurados, retención y purga de eventos.
-- [ ] **T28** `agent`: `OrderSource` por long-poll — reclamo con lease, backoff con jitter, reconexión (RF28, RF33, RF37).
-- [ ] **T29** `agent`: outbox de transiciones y drenado ordenado e idempotente al reconectar (RF34).
-- [ ] **T30** `agent`: órdenes manuales sin enlace con push diferido al servidor (RF35).
-- [ ] **T31** `agent`: degradación explícita — estado del enlace visible, sin modo silencioso (RF36).
+- [x] **T28** `agent`: `OrderSource` por long-poll — reclamo con lease, backoff con jitter, reconexión (RF28, RF33, RF37).
+- [x] **T29** `agent`: outbox de transiciones y drenado ordenado e idempotente al reconectar (RF34).
+- [x] **T30** `agent`: órdenes manuales sin enlace con push diferido al servidor (RF35).
+- [x] **T31** `agent`: degradación explícita — estado del enlace visible, sin modo silencioso (RF36).
 
 ### Servidor de pedidos (Linux propio)
 

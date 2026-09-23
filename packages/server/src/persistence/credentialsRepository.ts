@@ -1,11 +1,19 @@
 // RF32 — Credenciales por sucursal y presencia del agente.
 //
-// El secreto se guarda HASHEADO. Con el secreto en claro, cualquiera que lea la
-// base (un backup, un dump, un join mal hecho en un log) puede firmar pedidos
-// como si fuera la sucursal.
+// El secreto se guarda CIFRADO, no hasheado. La diferencia no es de gusto: el
+// servidor autentica verificando la firma HMAC del request, y para eso tiene que
+// poder recomputarla, o sea recuperar el secreto. Con un hash lo unico que podia
+// hacer era pedirle el secreto al cliente y compararlo, que es como quedo RF26
+// hasta aca: el secreto viajaba en claro en cada llamada y la firma no
+// autenticaba nada, porque quien podia firmar ya se habia identificado
+// mandandolo.
+//
+// El cifrado en reposo cubre lo que cubria el hash: quien lee la base sin tener
+// la clave del entorno del servidor no puede hacerse pasar por una sucursal.
 
-import { createHash } from 'node:crypto'
+import type { Result } from '@aoki-one/domain'
 
+import { cifrar, descifrar, type ClaveDeCifrado, type ErrorDeDescifrado } from './cifrado.js'
 import type { BaseDelServidor } from './database.js'
 
 export interface CredencialDeAgente {
@@ -14,6 +22,22 @@ export interface CredencialDeAgente {
   readonly revocadaEn: number | null
   readonly ultimoVisto: number | null
 }
+
+/** La credencial mas el material con el que se verifica su firma. Nunca sale de la API. */
+export interface SecretoDeSucursal {
+  readonly credencial: CredencialDeAgente
+  readonly secreto: string
+}
+
+export type FalloDeCredencial =
+  | { readonly codigo: 'INEXISTENTE' }
+  | { readonly codigo: 'REVOCADA' }
+  /**
+   * La fila esta, pero no se puede descifrar: la clave del entorno no es la que
+   * cifro, o la fila esta alterada. Es un fallo DEL SERVIDOR, no del cliente, y
+   * por eso se distingue de "credencial invalida".
+   */
+  | { readonly codigo: 'SECRETO_ILEGIBLE'; readonly motivo: ErrorDeDescifrado['codigo'] }
 
 export interface Presencia {
   readonly siteId: string
@@ -24,22 +48,23 @@ export interface Presencia {
 
 export interface CredentialsRepository {
   readonly alta: (keyId: string, siteId: string, secreto: string) => Promise<CredencialDeAgente>
-  /** Devuelve la credencial solo si el secreto coincide y no esta revocada. */
-  readonly verificar: (keyId: string, secreto: string) => Promise<CredencialDeAgente | undefined>
+  /**
+   * Resuelve el secreto por keyId para verificar una firma.
+   *
+   * Es el reemplazo de la vieja `verificar(keyId, secreto)`: el secreto no entra
+   * por parametro porque no llega del cliente, sale de aca.
+   */
+  readonly resolverSecreto: (keyId: string) => Promise<Result<SecretoDeSucursal, FalloDeCredencial>>
   readonly buscar: (keyId: string) => Promise<CredencialDeAgente | undefined>
   readonly revocar: (keyId: string, ahoraMs: number) => Promise<void>
   readonly registrarLatido: (presencia: Presencia) => Promise<void>
   readonly presencias: () => Promise<readonly Presencia[]>
 }
 
-export function hashearSecreto(secreto: string): string {
-  return createHash('sha256').update(secreto, 'utf8').digest('hex')
-}
-
 interface FilaDeCredencial {
   readonly key_id: string
   readonly site_id: string
-  readonly secreto_hash: string
+  readonly secreto_cifrado: string
   readonly revocada_en: number | null
   readonly ultimo_visto: number | null
 }
@@ -51,7 +76,10 @@ interface FilaDePresencia {
   readonly estado_json: string
 }
 
-export function crearCredentialsRepository(base: BaseDelServidor): CredentialsRepository {
+export function crearCredentialsRepository(
+  base: BaseDelServidor,
+  clave: ClaveDeCifrado,
+): CredentialsRepository {
   const { sql } = base
 
   function aCredencial(fila: FilaDeCredencial): CredencialDeAgente {
@@ -72,26 +100,38 @@ export function crearCredentialsRepository(base: BaseDelServidor): CredentialsRe
     alta: (keyId, siteId, secreto) => {
       sql
         .prepare(
-          `INSERT INTO agent_credentials (key_id, site_id, secreto_hash, revocada_en, ultimo_visto)
+          `INSERT INTO agent_credentials (key_id, site_id, secreto_cifrado, revocada_en, ultimo_visto)
            VALUES (?, ?, ?, NULL, NULL)
            ON CONFLICT(key_id) DO UPDATE SET
              site_id = excluded.site_id,
-             secreto_hash = excluded.secreto_hash,
+             secreto_cifrado = excluded.secreto_cifrado,
              revocada_en = NULL`,
         )
-        .run(keyId, siteId, hashearSecreto(secreto))
+        .run(keyId, siteId, cifrar(clave, secreto))
       return Promise.resolve({ keyId, siteId, revocadaEn: null, ultimoVisto: null })
     },
 
-    verificar: (keyId, secreto) => {
+    resolverSecreto: (keyId) => {
       const fila = buscarFila(keyId)
-      if (fila === undefined || fila.revocada_en !== null) {
-        return Promise.resolve(undefined)
+      if (fila === undefined) {
+        return Promise.resolve({ ok: false, error: { codigo: 'INEXISTENTE' } })
       }
-      if (fila.secreto_hash !== hashearSecreto(secreto)) {
-        return Promise.resolve(undefined)
+      if (fila.revocada_en !== null) {
+        return Promise.resolve({ ok: false, error: { codigo: 'REVOCADA' } })
       }
-      return Promise.resolve(aCredencial(fila))
+
+      const secreto = descifrar(clave, fila.secreto_cifrado)
+      if (!secreto.ok) {
+        return Promise.resolve({
+          ok: false,
+          error: { codigo: 'SECRETO_ILEGIBLE', motivo: secreto.error.codigo },
+        })
+      }
+
+      return Promise.resolve({
+        ok: true,
+        valor: { credencial: aCredencial(fila), secreto: secreto.valor },
+      })
     },
 
     buscar: (keyId) => {

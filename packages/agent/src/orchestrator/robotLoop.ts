@@ -20,6 +20,7 @@ import {
 import type { EventoSlot, PasoDeOrden } from '@aoki-one/domain'
 import type { Orden } from '../persistence/index.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
+import { aplicarTransicionDeOrden } from '../sync/transitions.js'
 import { resolverSlotDeOrden } from './slotWait.js'
 import { ejecutarPasoConReintentos } from './stepExecutor.js'
 import type { EstadoOrden, Lado } from '@aoki-one/domain'
@@ -88,12 +89,22 @@ export async function ejecutarCicloDeRobot(
             pendingReturns: resolucion.valor.pendingReturns,
           },
         })
-        await repositorios.ordenes.actualizar(orden.id, {
-          estado: 'DONE',
-          slotLocationCode: yaApoyado.locationCode,
-          waitingForSlot: false,
-          finalizadaEn: reloj.ahoraMs(),
-        })
+        // RF34: el servidor tiene que ver DONE igual. Que no haya habido maniobra
+        // es un detalle de la sucursal, no del pedido. Estado y reporte van en la
+        // misma transaccion: separados, un corte en el medio deja la orden
+        // terminada aca y PENDING para siempre en la app de picking.
+        await aplicarTransicionDeOrden(
+          dependencias,
+          orden.id,
+          {
+            estado: 'DONE',
+            slotLocationCode: yaApoyado.locationCode,
+            waitingForSlot: false,
+            finalizadaEn: reloj.ahoraMs(),
+          },
+          'DONE',
+          { huboManiobra: false },
+        )
         // Tambien cuenta: es un pedido atendido, aunque el robot no se haya movido.
         await registrarMetrica(dependencias, orden, 'DONE')
         return {
@@ -128,12 +139,18 @@ export async function ejecutarCicloDeRobot(
 
   // Toma del robot y del slot, y arranque de la orden.
   await repositorios.robots.fijarOrdenActiva(robotId, orden.id)
-  await repositorios.ordenes.actualizar(orden.id, {
-    estado: 'IN_PROGRESS',
-    slotLocationCode,
-    waitingForSlot: false,
-    iniciadaEn: reloj.ahoraMs(),
-  })
+  await aplicarTransicionDeOrden(
+    dependencias,
+    orden.id,
+    {
+      estado: 'IN_PROGRESS',
+      slotLocationCode,
+      waitingForSlot: false,
+      iniciadaEn: reloj.ahoraMs(),
+    },
+    'IN_PROGRESS',
+    { robotId, slotLocationCode },
+  )
 
   await registrarEvento(dependencias, orden.id, 'ORDER_STARTED', 'INFO', {
     robotId,
@@ -243,10 +260,13 @@ async function ejecutarManiobra(
     await transicionarSlotDeOrden(dependencias, orden, { tipo: 'LIBERAR' })
   }
 
-  await repositorios.ordenes.actualizar(orden.id, {
-    estado: 'DONE',
-    finalizadaEn: reloj.ahoraMs(),
-  })
+  await aplicarTransicionDeOrden(
+    dependencias,
+    orden.id,
+    { estado: 'DONE', finalizadaEn: reloj.ahoraMs() },
+    'DONE',
+    { huboManiobra: true },
+  )
   return { estadoFinal: 'DONE' }
 }
 
@@ -312,13 +332,18 @@ async function marcarEnError(
   orden: Orden,
   motivo: string,
 ): Promise<void> {
-  const { repositorios, reloj } = dependencias
+  const { reloj } = dependencias
   const siguiente = transicionarOrden(orden.estado, { tipo: 'FALLAR', motivo })
-  await repositorios.ordenes.actualizar(orden.id, {
-    estado: siguiente.ok ? siguiente.valor : 'ERROR',
-    errorReason: motivo,
-    finalizadaEn: reloj.ahoraMs(),
-  })
+  const estadoFinal = siguiente.ok ? siguiente.valor : 'ERROR'
+  // RF34: el motivo viaja al servidor. Sin el, la app de picking ve una orden en
+  // ERROR y no tiene con que decirle al operario que paso.
+  await aplicarTransicionDeOrden(
+    dependencias,
+    orden.id,
+    { estado: estadoFinal, errorReason: motivo, finalizadaEn: reloj.ahoraMs() },
+    estadoFinal,
+    { motivo },
+  )
   await registrarMetrica(dependencias, orden, 'ERROR')
 }
 

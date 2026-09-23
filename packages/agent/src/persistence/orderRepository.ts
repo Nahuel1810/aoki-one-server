@@ -90,34 +90,84 @@ export interface OrderRepository {
   ) => Promise<Result<Orden, ErrorDeOrden>>
 }
 
+/**
+ * Deja los cambios en la fila y devuelve la orden ya actualizada.
+ *
+ * Es SINCRONA y vive fuera del repositorio a proposito: asi el outbox la puede
+ * componer dentro de su propia transaccion y escribir el estado de la orden y su
+ * reporte de una sola vez (RF34). Con dos transacciones separadas, un corte en el
+ * medio deja la orden terminada en la sucursal y PENDING para siempre en la app
+ * de picking. `undefined` = no hay orden con ese id.
+ */
+export function aplicarCambiosDeOrden(
+  base: BaseDelAgente,
+  ordenId: string,
+  cambios: CambiosDeOrden,
+): Orden | undefined {
+  const actual = buscarOrden(base, ordenId)
+  if (actual === undefined) {
+    return undefined
+  }
+
+  // Escritura incremental por entidad: se tocan solo los campos que cambian,
+  // en vez del volcado del snapshot completo que hacia el legacy en cada paso.
+  const siguiente: Orden = { ...actual, ...cambios }
+  base.sql
+    .prepare(
+      `UPDATE orders SET
+         estado = @estado,
+         target_location = @targetLocation,
+         slot_location_code = @slotLocationCode,
+         current_step_index = @currentStepIndex,
+         waiting_for_slot = @waitingForSlot,
+         error_reason = @errorReason,
+         iniciada_en = @iniciadaEn,
+         finalizada_en = @finalizadaEn
+       WHERE id = @id`,
+    )
+    .run({
+      id: ordenId,
+      estado: siguiente.estado,
+      targetLocation: siguiente.targetLocation,
+      slotLocationCode: siguiente.slotLocationCode,
+      currentStepIndex: siguiente.currentStepIndex,
+      waitingForSlot: siguiente.waitingForSlot ? 1 : 0,
+      errorReason: siguiente.errorReason,
+      iniciadaEn: siguiente.iniciadaEn,
+      finalizadaEn: siguiente.finalizadaEn,
+    })
+
+  return siguiente
+}
+
+function aOrden(fila: FilaDeOrden): Orden {
+  return {
+    id: fila.id,
+    siteId: fila.site_id,
+    robotId: fila.robot_id,
+    externalOrderId: fila.external_order_id,
+    tipo: fila.tipo as Orden['tipo'],
+    origen: fila.origen as OrigenDeOrden,
+    estado: fila.estado as Orden['estado'],
+    locationCode: fila.location_code,
+    targetLocation: fila.target_location,
+    slotLocationCode: fila.slot_location_code,
+    currentStepIndex: fila.current_step_index,
+    waitingForSlot: fila.waiting_for_slot === 1,
+    errorReason: fila.error_reason,
+    creadaEn: fila.creada_en,
+    iniciadaEn: fila.iniciada_en,
+    finalizadaEn: fila.finalizada_en,
+  }
+}
+
+function buscarOrden(base: BaseDelAgente, ordenId: string): Orden | undefined {
+  const fila = base.sql.prepare('SELECT * FROM orders WHERE id = ?').get(ordenId)
+  return fila === undefined ? undefined : aOrden(fila as FilaDeOrden)
+}
+
 export function crearOrderRepository(base: BaseDelAgente): OrderRepository {
   const { sql } = base
-
-  function aFila(fila: FilaDeOrden): Orden {
-    return {
-      id: fila.id,
-      siteId: fila.site_id,
-      robotId: fila.robot_id,
-      externalOrderId: fila.external_order_id,
-      tipo: fila.tipo as Orden['tipo'],
-      origen: fila.origen as OrigenDeOrden,
-      estado: fila.estado as Orden['estado'],
-      locationCode: fila.location_code,
-      targetLocation: fila.target_location,
-      slotLocationCode: fila.slot_location_code,
-      currentStepIndex: fila.current_step_index,
-      waitingForSlot: fila.waiting_for_slot === 1,
-      errorReason: fila.error_reason,
-      creadaEn: fila.creada_en,
-      iniciadaEn: fila.iniciada_en,
-      finalizadaEn: fila.finalizada_en,
-    }
-  }
-
-  function buscar(ordenId: string): Orden | undefined {
-    const fila = sql.prepare('SELECT * FROM orders WHERE id = ?').get(ordenId)
-    return fila === undefined ? undefined : aFila(fila as FilaDeOrden)
-  }
 
   return {
     crear: (orden) => {
@@ -158,13 +208,13 @@ export function crearOrderRepository(base: BaseDelAgente): OrderRepository {
       }
     },
 
-    buscarPorId: (ordenId) => Promise.resolve(buscar(ordenId)),
+    buscarPorId: (ordenId) => Promise.resolve(buscarOrden(base, ordenId)),
 
     buscarPorExternalOrderId: (siteId, externalOrderId) => {
       const fila = sql
         .prepare('SELECT * FROM orders WHERE site_id = ? AND external_order_id = ?')
         .get(siteId, externalOrderId)
-      return Promise.resolve(fila === undefined ? undefined : aFila(fila as FilaDeOrden))
+      return Promise.resolve(fila === undefined ? undefined : aOrden(fila as FilaDeOrden))
     },
 
     listar: (filtro) => {
@@ -189,46 +239,17 @@ export function crearOrderRepository(base: BaseDelAgente): OrderRepository {
         .prepare(`SELECT * FROM orders${donde} ORDER BY creada_en, id`)
         .all(...parametros)
 
-      return Promise.resolve(filas.map((f: unknown) => aFila(f as FilaDeOrden)))
+      return Promise.resolve(filas.map((f: unknown) => aOrden(f as FilaDeOrden)))
     },
 
     actualizar: (ordenId, cambios) => {
-      const actual = buscar(ordenId)
-      if (actual === undefined) {
+      const siguiente = aplicarCambiosDeOrden(base, ordenId, cambios)
+      if (siguiente === undefined) {
         return Promise.resolve({
           ok: false as const,
           error: { codigo: 'ORDEN_INEXISTENTE' as const, ordenId },
         })
       }
-
-      // Escritura incremental por entidad: se tocan solo los campos que cambian,
-      // en vez del volcado del snapshot completo que hacia el legacy en cada paso.
-      const siguiente: Orden = { ...actual, ...cambios }
-      sql
-        .prepare(
-          `UPDATE orders SET
-             estado = @estado,
-             target_location = @targetLocation,
-             slot_location_code = @slotLocationCode,
-             current_step_index = @currentStepIndex,
-             waiting_for_slot = @waitingForSlot,
-             error_reason = @errorReason,
-             iniciada_en = @iniciadaEn,
-             finalizada_en = @finalizadaEn
-           WHERE id = @id`,
-        )
-        .run({
-          id: ordenId,
-          estado: siguiente.estado,
-          targetLocation: siguiente.targetLocation,
-          slotLocationCode: siguiente.slotLocationCode,
-          currentStepIndex: siguiente.currentStepIndex,
-          waitingForSlot: siguiente.waitingForSlot ? 1 : 0,
-          errorReason: siguiente.errorReason,
-          iniciadaEn: siguiente.iniciadaEn,
-          finalizadaEn: siguiente.finalizadaEn,
-        })
-
       return Promise.resolve({ ok: true as const, valor: siguiente })
     },
   }

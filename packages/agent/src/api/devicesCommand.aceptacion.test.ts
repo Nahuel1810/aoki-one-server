@@ -47,6 +47,7 @@ const TOKEN_DE_MANTENIMIENTO = 'token-de-prueba'
 
 const OPCIONES: OpcionesDelAgente = {
   siteId: SITE_ID,
+  agentId: 'AG-TEST',
   rutaDeBase: ':memory:',
   montarApi: true,
   // RF20: el default es false. Sin esto el comando directo se iria contra un PLC
@@ -57,6 +58,8 @@ const OPCIONES: OpcionesDelAgente = {
   zonaDePickeo: [],
   // RF22: el comando directo a PLC exige token. Configurado, este fixture lo usa.
   tokenDeMantenimiento: TOKEN_DE_MANTENIMIENTO,
+  // RF36/T26: el enlace con el servidor va APAGADO en este fixture.
+  enlace: null,
 }
 
 interface RespuestaDeComando {

@@ -183,6 +183,9 @@ const RELOJ: Reloj = {
   dormir: () => Promise.resolve(),
 }
 
+/** RF35: el prefijo del id externo local sale de la identidad del agente. */
+const AGENT_ID = 'AG-TEST'
+
 function dependencias(
   repositorios: RepositoriosDelAgente,
   siteId: string,
@@ -194,6 +197,7 @@ function dependencias(
     politica: { maxIntentos: 3, baseBackoffMs: 10 },
     repositorios,
     siteId,
+    agentId: AGENT_ID,
     generarId,
   }
 }

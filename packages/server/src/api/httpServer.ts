@@ -16,7 +16,7 @@
 import { createServer } from 'node:http'
 
 import express from 'express'
-import type { NextFunction, Request, Response } from 'express'
+import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import { z } from 'zod'
 
 import type { CredencialDeAgente, CredentialsRepository } from '../persistence/credentialsRepository.js'
@@ -59,11 +59,18 @@ export interface ServidorHttp {
   readonly cerrar: () => Promise<void>
 }
 
-/** Headers del contrato con la app de picking y con el agente. */
+/**
+ * Headers del contrato con la app de picking y con el agente.
+ *
+ * NO hay header de secreto. El cliente dice QUIEN es (`keyId`) y lo PRUEBA con
+ * la firma; el servidor resuelve el secreto por keyId desde su propio almacen.
+ * Mandar el secreto, como se hacia antes, volvia decorativa a la firma: el que
+ * podia firmar ya se habia autenticado al mandarlo, y bastaba con interceptar
+ * una sola request para poder emitir cualquier otra.
+ */
 export const HEADER_KEY_ID = 'x-aoki-key-id'
 export const HEADER_FIRMA = 'x-aoki-signature'
 export const HEADER_TIMESTAMP = 'x-aoki-timestamp'
-export const HEADER_SECRETO_DE_AGENTE = 'x-aoki-agent-secret'
 
 /** El pedido que manda la app de picking. */
 const ALTA_DE_PEDIDO = z.object({
@@ -157,79 +164,86 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
   }
 
   /**
-   * Autentica al agente por su credencial de sucursal (RF32).
+   * Autentica por firma HMAC (RF26, RF32). Es la UNICA autenticacion de escritura.
    *
-   * Deja la credencial en el request para que el handler pueda validar que el
-   * `siteId` del body coincide: una sucursal no puede reclamar trabajo de otra.
+   * El cliente manda keyId, timestamp y firma; el secreto no viaja nunca. El
+   * servidor lo resuelve por keyId desde su propio almacen y recomputa la firma
+   * sobre el body crudo. La app de picking y el agente usan el mismo mecanismo:
+   * no hay motivo para que el agente tenga uno mas debil.
+   *
+   * Deja la credencial en el request para que el handler valide a que sucursal
+   * pertenece el recurso: autenticar no es autorizar.
    */
-  function autenticarAgente(req: Request, res: Response, next: NextFunction): void {
-    void (async () => {
-      const keyId = req.get(HEADER_KEY_ID)
-      const secreto = req.get(HEADER_SECRETO_DE_AGENTE)
-      if (keyId === undefined || secreto === undefined) {
-        error(res, 401, 'falta la credencial de sucursal')
+  const autenticarPorFirma = asincrono(async (req, res, next) => {
+    const keyId = req.get(HEADER_KEY_ID)
+    if (keyId === undefined) {
+      error(res, 401, 'falta el identificador de credencial')
+      return
+    }
+
+    const resuelto = await credenciales.resolverSecreto(keyId)
+    if (!resuelto.ok) {
+      if (resuelto.error.codigo === 'SECRETO_ILEGIBLE') {
+        // El servidor no puede recomputar la firma de esta credencial: es su
+        // problema de configuracion, no del cliente. Un 401 mandaria al agente
+        // a reemitir una credencial que esta bien.
+        error(res, 500, 'no se pudo leer el material de la credencial')
         return
       }
+      error(res, 401, 'credencial invalida o revocada')
+      return
+    }
 
-      const credencial = await credenciales.verificar(keyId, secreto)
-      if (credencial === undefined) {
-        error(res, 401, 'credencial invalida o revocada')
-        return
-      }
+    // En un GET no hay body que firmar, asi que se firma la RUTA COMPLETA. Sin
+    // eso la firma no quedaria atada al recurso: una firma valida para consultar
+    // un pedido serviria para leer cualquier otro de la misma sucursal, que es
+    // justo lo que la firma tiene que impedir.
+    const crudo = (req as RequestConCrudo).cuerpoCrudo
+    const contenidoFirmado = req.method === 'GET' ? req.originalUrl : (crudo ?? '')
 
-      ;(req as RequestConCredencial).credencial = credencial
-      next()
-    })()
+    const firma = verificarFirma({
+      cuerpoCrudo: contenidoFirmado,
+      firma: req.get(HEADER_FIRMA),
+      timestamp: req.get(HEADER_TIMESTAMP),
+      secreto: resuelto.valor.secreto,
+      ahoraMs: ahora(),
+      ventanaMs: configuracion.ventanaDeFirmaMs,
+    })
+    if (!firma.ok) {
+      error(res, 401, `firma rechazada: ${firma.error.codigo}`)
+      return
+    }
+
+    ;(req as RequestConCredencial).credencial = resuelto.valor.credencial
+    next()
+  })
+
+  /** La credencial que dejo `autenticarPorFirma`. Nunca falta: el middleware corrio antes. */
+  function credencialDe(req: Request, res: Response): CredencialDeAgente | null {
+    const credencial = (req as RequestConCredencial).credencial
+    if (credencial === undefined) {
+      error(res, 401, 'credencial invalida o revocada')
+      return null
+    }
+    return credencial
   }
 
   // ------------------------------------------------- app de picking (RF26)
-  app.post('/api/v1/orders', (req: Request, res: Response) => {
-    void (async () => {
-      const keyId = req.get(HEADER_KEY_ID)
-      if (keyId === undefined) {
-        error(res, 401, 'falta el identificador de credencial')
-        return
-      }
-
+  app.post(
+    '/api/v1/orders',
+    autenticarPorFirma,
+    asincrono(async (req, res) => {
       const alta = validar(ALTA_DE_PEDIDO, req.body, res)
       if (alta === null) {
         return
       }
 
-      // El secreto se resuelve por keyId y despues se verifica la firma sobre el
-      // body crudo. El siteId del body se valida contra la credencial: una
-      // sucursal no puede crear ordenes de otra.
-      const credencial = await credenciales.buscar(keyId)
-      if (credencial === undefined || credencial.revocadaEn !== null) {
-        error(res, 401, 'credencial invalida o revocada')
+      const credencial = credencialDe(req, res)
+      if (credencial === null) {
         return
       }
       if (credencial.siteId !== alta.siteId) {
         error(res, 403, 'el siteId del pedido no corresponde a la credencial')
-        return
-      }
-
-      const secreto = req.get(HEADER_SECRETO_DE_AGENTE)
-      if (secreto === undefined) {
-        error(res, 401, 'falta el secreto para verificar la firma')
-        return
-      }
-      const verificada = await credenciales.verificar(keyId, secreto)
-      if (verificada === undefined) {
-        error(res, 401, 'credencial invalida o revocada')
-        return
-      }
-
-      const firma = verificarFirma({
-        cuerpoCrudo: (req as RequestConCrudo).cuerpoCrudo ?? '',
-        firma: req.get(HEADER_FIRMA),
-        timestamp: req.get(HEADER_TIMESTAMP),
-        secreto,
-        ahoraMs: ahora(),
-        ventanaMs: configuracion.ventanaDeFirmaMs,
-      })
-      if (!firma.ok) {
-        error(res, 401, `firma rechazada: ${firma.error.codigo}`)
         return
       }
 
@@ -241,19 +255,17 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
       })
       const respuesta = responderIngreso(resultado)
       ok(res, respuesta.estadoHttp, respuesta.cuerpo.data, respuesta.cuerpo.created)
-    })()
-  })
+    }),
+  )
 
-  app.get('/api/v1/orders/:externalOrderId', (req: Request, res: Response) => {
-    void (async () => {
-      const keyId = req.get(HEADER_KEY_ID)
-      if (keyId === undefined) {
-        error(res, 401, 'falta el identificador de credencial')
-        return
-      }
-      const credencial = await credenciales.buscar(keyId)
-      if (credencial === undefined || credencial.revocadaEn !== null) {
-        error(res, 401, 'credencial invalida o revocada')
+  app.get(
+    '/api/v1/orders/:externalOrderId',
+    // Tambien va firmada: un keyId es un IDENTIFICADOR, no un secreto. Sin firma,
+    // cualquiera que lo conozca lee el estado de todos los pedidos de la sucursal.
+    autenticarPorFirma,
+    asincrono(async (req, res) => {
+      const credencial = credencialDe(req, res)
+      if (credencial === null) {
         return
       }
 
@@ -266,27 +278,51 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         return
       }
       ok(res, 200, pedido)
-    })()
-  })
+    }),
+  )
 
   // ------------------------------------------------------- agente (RF28–RF31)
-  app.post('/api/v1/agent/work', autenticarAgente, (req: Request, res: Response) => {
-    void (async () => {
+  app.post(
+    '/api/v1/agent/work',
+    autenticarPorFirma,
+    asincrono(async (req, res) => {
       const pedido = validar(RECLAMO_DE_TRABAJO, req.body, res)
       if (pedido === null) {
         return
       }
-      const credencial = (req as RequestConCredencial).credencial
-      if (credencial === undefined || credencial.siteId !== pedido.siteId) {
+      const credencial = credencialDe(req, res)
+      if (credencial === null) {
+        return
+      }
+      if (credencial.siteId !== pedido.siteId) {
         error(res, 403, 'el siteId no corresponde a la credencial')
         return
       }
+
+      // Reclamar para un cliente que ya no esta es perder ordenes: el lote sale
+      // de la cola con lease vigente, la respuesta se escribe en un socket
+      // muerto y nadie ejecuta ese trabajo hasta que el lease vence. El agente
+      // no lo recibio y el servidor cree que si. Por eso el bucle mira si la
+      // conexion sigue viva ANTES de cada reclamo, no despues.
+      //
+      // La señal es el 'close' de la RESPUESTA sin haberla terminado de
+      // escribir. El 'close' del request no sirve: Node lo emite apenas
+      // termina de leer el body, o sea en toda request, y con el bucle cortaria
+      // siempre en la primera vuelta.
+      let clienteCortado = false
+      res.on('close', () => {
+        clienteCortado = !res.writableFinished
+      })
+      const clienteSeFue = (): boolean => clienteCortado || res.writableEnded
 
       // Long-poll: se retiene la conexion hasta que hay trabajo o vence el
       // timeout. No es polling: no hay ciclo de reintento en caliente del lado
       // del agente.
       const limite = ahora() + configuracion.esperaDeLongPollMs
       for (;;) {
+        if (clienteSeFue()) {
+          return
+        }
         const reclamados = await cola.reclamar(
           pedido.siteId,
           pedido.agentId,
@@ -305,13 +341,33 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         }
         await dormir(configuracion.sondeoDeLongPollMs)
       }
-    })()
-  })
+    }),
+  )
 
-  app.post('/api/v1/agent/report', autenticarAgente, (req: Request, res: Response) => {
-    void (async () => {
+  app.post(
+    '/api/v1/agent/report',
+    autenticarPorFirma,
+    asincrono(async (req, res) => {
       const reporte = validar(REPORTE_DE_TRANSICION, req.body, res)
       if (reporte === null) {
+        return
+      }
+      const credencial = credencialDe(req, res)
+      if (credencial === null) {
+        return
+      }
+
+      // El ordenId viene del cliente y es el unico endpoint de agente donde el
+      // recurso no esta identificado por el siteId del body: hay que ir a buscar
+      // de que sucursal es la orden. Sin esto, cualquier credencial valida podia
+      // mover el estado de ordenes de otra sucursal.
+      //
+      // Que la orden NO exista no es un 403: sigue el camino de aplicarTransicion,
+      // que contesta ORDEN_INEXISTENTE con 200 para que el outbox del agente la
+      // saque de la cola. Un 4xx ahi lo haria reintentar para siempre (RF34).
+      const orden = await cola.buscarPorId(reporte.ordenId)
+      if (orden !== undefined && orden.siteId !== credencial.siteId) {
+        error(res, 403, 'la orden no corresponde a la credencial')
         return
       }
 
@@ -323,25 +379,35 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         metadata: reporte.metadata,
       })
 
-      if (resultado.tipo === 'ORDEN_INEXISTENTE') {
-        error(res, 404, 'orden inexistente')
-        return
-      }
-      // Una transicion descartada NO es un error para el agente: su outbox
-      // reintenta hasta tener confirmacion, y un 4xx lo haria reintentar para
-      // siempre algo que ya se aplico.
+      // Los tres resultados viajan por la rama ok, con 200, incluido
+      // ORDEN_INEXISTENTE. Una transicion descartada NO es un error para el
+      // agente: su outbox reintenta hasta tener confirmacion, y un 4xx lo haria
+      // reintentar para siempre algo que ya se aplico.
+      //
+      // ORDEN_INEXISTENTE tampoco puede ser un 404. El agente no tiene como
+      // distinguir ese 404 del que devuelve esta misma API cuando la ruta no
+      // existe —un proxy mal configurado, una base de URL con un prefijo de mas—,
+      // y leerlo como "la orden no esta" le haria descartar del outbox cambios de
+      // estado que el servidor nunca recibio. Perder una transicion en silencio es
+      // exactamente lo que RF34 prohibe, asi que el caso terminal se dice por el
+      // cuerpo y el 404 queda reservado para "esta ruta no existe".
       ok(res, 200, resultado)
-    })()
-  })
+    }),
+  )
 
-  app.post('/api/v1/agent/heartbeat', autenticarAgente, (req: Request, res: Response) => {
-    void (async () => {
+  app.post(
+    '/api/v1/agent/heartbeat',
+    autenticarPorFirma,
+    asincrono(async (req, res) => {
       const latido = validar(LATIDO, req.body, res)
       if (latido === null) {
         return
       }
-      const credencial = (req as RequestConCredencial).credencial
-      if (credencial === undefined || credencial.siteId !== latido.siteId) {
+      const credencial = credencialDe(req, res)
+      if (credencial === null) {
+        return
+      }
+      if (credencial.siteId !== latido.siteId) {
         error(res, 403, 'el siteId no corresponde a la credencial')
         return
       }
@@ -354,12 +420,13 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         estado: latido.estado,
       })
       ok(res, 200, { siteId: latido.siteId, recibidoEn: ahoraMs })
-    })()
-  })
+    }),
+  )
 
   // ---------------------------------------------------------------- health
-  app.get('/health', (_req: Request, res: Response) => {
-    void (async () => {
+  app.get(
+    '/health',
+    asincrono(async (_req, res) => {
       const ahoraMs = ahora()
       const presencias = await credenciales.presencias()
 
@@ -376,14 +443,80 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
       )
 
       ok(res, 200, { startedAt: arrancadoEn, sites: sucursales })
-    })()
-  })
+    }),
+  )
 
   app.use((_req: Request, res: Response) => {
     error(res, 404, 'ruta no encontrada')
   })
 
+  /**
+   * Red de contencion: todo fallo de un handler termina aca (RF26).
+   *
+   * Va ULTIMO y con cuatro argumentos: Express reconoce un middleware de error
+   * solo por su aridad, y solo atiende lo que se registro despues del handler
+   * que fallo. `_siguiente` existe por eso, aunque no se use.
+   */
+  app.use((causa: unknown, _req: Request, res: Response, _siguiente: NextFunction): void => {
+    // Un 500 sin rastro es indebuggeable: el cliente no ve el detalle a
+    // proposito, asi que el unico lugar donde queda es el log del servidor.
+    console.error('[servidor] fallo no controlado en una request:', causa)
+
+    if (res.headersSent) {
+      // Ya se empezo a escribir la respuesta: cambiarle el status es imposible y
+      // agregarle otro cuerpo le daria al cliente un JSON corrupto. Se corta la
+      // conexion para que lo lea como lo que es, una respuesta incompleta.
+      res.destroy()
+      return
+    }
+
+    // El detalle del fallo no sale: un stack trace en la respuesta le dibuja al
+    // atacante el mapa del servidor.
+    const estado = estadoDeCliente(causa)
+    error(res, estado ?? 500, estado === null ? 'error interno del servidor' : 'entrada invalida')
+  })
+
   return app
+}
+
+/**
+ * Envuelve un handler async para que su fallo llegue a Express en vez de matar
+ * al proceso.
+ *
+ * Express 4 no mira la promesa que devuelve un handler, asi que un
+ * `void (async () => {...})()` que rechaza no es un error de request: es un
+ * unhandled rejection, y Node baja el proceso entero. Un SQLITE_BUSY, un disco
+ * lleno o una base corrupta en UNA request dejaban sin servidor a TODAS las
+ * sucursales. Aca el rechazo se deriva a `next`, que lo lleva al middleware de
+ * error.
+ */
+function asincrono(
+  handler: (req: Request, res: Response, next: NextFunction) => Promise<void>,
+): RequestHandler {
+  return (req, res, next) => {
+    handler(req, res, next).catch((causa: unknown) => {
+      next(causa)
+    })
+  }
+}
+
+/**
+ * El status que el propio error declara, cuando culpa al cliente.
+ *
+ * `express.json()` rechaza un body mal formado con un error que trae
+ * `status: 400`. Contestarle 500 a eso seria mentir sobre de quien es el
+ * problema e invitar al agente a reintentar algo que nunca va a andar. Todo lo
+ * demas —repositorio, disco, base bloqueada— es del servidor.
+ */
+function estadoDeCliente(causa: unknown): number | null {
+  if (typeof causa !== 'object' || causa === null || !('status' in causa)) {
+    return null
+  }
+  const { status } = causa
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 499) {
+    return null
+  }
+  return status
 }
 
 interface RequestConCrudo extends Request {

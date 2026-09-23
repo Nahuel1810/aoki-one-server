@@ -12,6 +12,7 @@ import type { CuerpoDeRespuesta } from './httpServer.js'
 
 const OPCIONES: OpcionesDelAgente = {
   siteId: 'SUC-TEST',
+  agentId: 'AG-TEST',
   rutaDeBase: ':memory:',
   montarApi: true,
   simularPlc: true,
@@ -19,6 +20,9 @@ const OPCIONES: OpcionesDelAgente = {
   httpBind: '127.0.0.1',
   zonaDePickeo: ['3X02AE1'],
   tokenDeMantenimiento: null,
+  // RF36/T26: el enlace con el servidor va APAGADO. Estos fixtures ejercitan el
+  // agente solo con su cola local, que es como arranca en el cutover.
+  enlace: null,
 }
 
 async function levantar(): Promise<Agente> {

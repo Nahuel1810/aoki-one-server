@@ -28,14 +28,16 @@ const ESQUEMA = `
     creada_en   INTEGER NOT NULL
   );
 
-  -- RF32. El secreto se guarda hasheado: quien lea la base no puede hacerse
-  -- pasar por una sucursal.
+  -- RF32. El secreto se guarda CIFRADO con la clave del entorno del proceso, no
+  -- hasheado: el servidor verifica la firma HMAC de cada request recomputandola y
+  -- para eso necesita el material, no un resumen. Quien lea la base sin tener la
+  -- clave sigue sin poder hacerse pasar por una sucursal.
   CREATE TABLE IF NOT EXISTS agent_credentials (
-    key_id        TEXT PRIMARY KEY,
-    site_id       TEXT NOT NULL,
-    secreto_hash  TEXT NOT NULL,
-    revocada_en   INTEGER,
-    ultimo_visto  INTEGER
+    key_id           TEXT PRIMARY KEY,
+    site_id          TEXT NOT NULL,
+    secreto_cifrado  TEXT NOT NULL,
+    revocada_en      INTEGER,
+    ultimo_visto     INTEGER
   );
   CREATE INDEX IF NOT EXISTS agent_credentials_site ON agent_credentials (site_id);
 
@@ -90,9 +92,39 @@ const ESQUEMA = `
   );
 `
 
+interface ColumnaDeTabla {
+  readonly name: string
+}
+
+/**
+ * Corta el arranque si la base viene del esquema viejo de credenciales.
+ *
+ * `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe, asi que una base
+ * anterior conservaria `secreto_hash` y el servidor arrancaria para despues
+ * fallar en cada request. Un hash no se puede convertir en el material del
+ * secreto: las credenciales hay que reemitirlas, y eso se dice ahora.
+ */
+function verificarEsquemaDeCredenciales(sql: Database.Database): void {
+  const columnas = sql
+    .prepare('SELECT name FROM pragma_table_info(?)')
+    .all('agent_credentials')
+    .map((fila: unknown) => (fila as ColumnaDeTabla).name)
+
+  if (columnas.includes('secreto_hash')) {
+    // Se cierra antes de tirar: el proceso muere igual, pero en el test que
+    // afirma este arranque fallido el archivo queda liberado.
+    sql.close()
+    throw new Error(
+      'la base tiene el esquema viejo de agent_credentials (secreto_hash). El secreto ahora se ' +
+        'guarda cifrado y un hash no se puede migrar: hay que reemitir las credenciales de cada sucursal.',
+    )
+  }
+}
+
 export function abrirBase(ruta: string): BaseDelServidor {
   const sql = new Database(ruta)
   sql.exec(ESQUEMA)
+  verificarEsquemaDeCredenciales(sql)
   return {
     sql,
     cerrar: () => {

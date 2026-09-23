@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest'
 import { crearAgente } from '../composition.js'
 
 const SITE_ID = 'sucursal-test'
+/** RF35: el id externo de una orden local se prefija con la identidad del agente. */
+const AGENT_ID = 'AG-TEST'
 const ROBOT_ID = '1'
 const ESTANTERIA = '3X'
 
@@ -165,6 +167,7 @@ describe('e2e del flujo de PICK en simulacion', () => {
     async () => {
       const agente = crearAgente({
         siteId: SITE_ID,
+        agentId: AGENT_ID,
         rutaDeBase: ':memory:',
         montarApi: true,
         simularPlc: true,
@@ -174,6 +177,9 @@ describe('e2e del flujo de PICK en simulacion', () => {
   // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
   // Este fixture no lo usa, asi que va en null a proposito.
   tokenDeMantenimiento: null,
+        // RF36/T26: el enlace con el servidor va APAGADO. Este flujo ejercita el
+        // agente solo con su cola local, que es como arranca en el cutover.
+        enlace: null,
       })
 
       await agente.iniciar()

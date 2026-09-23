@@ -1,9 +1,11 @@
 // Composicion del servidor de pedidos.
 
 import { randomUUID } from 'node:crypto'
+import process from 'node:process'
 
 import { crearServidorHttp } from './api/httpServer.js'
 import type { ConfiguracionDelServidor, DireccionDeEscucha, ServidorHttp } from './api/httpServer.js'
+import { describirErrorDeClave, leerClaveDeCifrado } from './persistence/cifrado.js'
 import { abrirBase } from './persistence/database.js'
 import { crearCredentialsRepository } from './persistence/credentialsRepository.js'
 import type { CredentialsRepository } from './persistence/credentialsRepository.js'
@@ -15,6 +17,13 @@ export interface OpcionesDelServidor {
   readonly httpPuerto: number
   readonly httpBind: string
   readonly configuracion?: Partial<ConfiguracionDelServidor>
+  /**
+   * Entorno del que sale la clave de cifrado de credenciales.
+   *
+   * Se inyecta en vez de leer `process.env` adentro para que los tests puedan
+   * afirmar el arranque fallido sin pisar el proceso. En produccion se omite.
+   */
+  readonly entorno?: Readonly<Record<string, string | undefined>>
 }
 
 export interface Servidor {
@@ -44,13 +53,21 @@ export const CONFIGURACION_POR_DEFECTO: ConfiguracionDelServidor = {
 }
 
 export function crearServidor(opciones: OpcionesDelServidor): Servidor {
+  // Antes de abrir nada: un servidor que arranca sin poder descifrar las
+  // credenciales no puede verificar una sola firma, y aceptar trafico que no se
+  // puede autenticar es peor que no estar. Muere aca, ruidoso y temprano.
+  const clave = leerClaveDeCifrado(opciones.entorno ?? process.env)
+  if (!clave.ok) {
+    throw new Error(`el servidor no puede arrancar: ${describirErrorDeClave(clave.error)}`)
+  }
+
   const base = abrirBase(opciones.rutaDeBase)
   const cola = crearColaDelServidor(
     base,
     () => randomUUID(),
     () => Date.now(),
   )
-  const credenciales = crearCredentialsRepository(base)
+  const credenciales = crearCredentialsRepository(base, clave.valor)
 
   const configuracion: ConfiguracionDelServidor = {
     ...CONFIGURACION_POR_DEFECTO,

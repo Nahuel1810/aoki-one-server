@@ -16,6 +16,7 @@ import type { EstadoOrden, Result } from '@aoki-one/domain'
 
 import type { Orden } from '../persistence/index.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
+import { aplicarTransicionDeOrden } from '../sync/transitions.js'
 import type { DependenciasDelOrquestador } from './ports.js'
 
 export type ErrorDeReintentoDeOrden =
@@ -62,13 +63,23 @@ export async function reintentarOrden(
 
   // Replay completo desde HOMING: el operario ya devolvio el cajon al punto de
   // origen del paso que fallo. El slot NO se toca y sigue utilizable (RF13).
-  const actualizada = await repositorios.ordenes.actualizar(ordenId, {
-    estado: siguiente.valor,
-    currentStepIndex: 0,
-    errorReason: null,
-    waitingForSlot: false,
-    finalizadaEn: null,
-  })
+  //
+  // RF34: volver a PENDING es un cambio de estado como cualquier otro, y viaja en
+  // la misma transaccion que el estado. Sin el reporte, la app de picking se
+  // queda viendo ERROR una orden que ya se esta rehaciendo.
+  const actualizada = await aplicarTransicionDeOrden(
+    dependencias,
+    ordenId,
+    {
+      estado: siguiente.valor,
+      currentStepIndex: 0,
+      errorReason: null,
+      waitingForSlot: false,
+      finalizadaEn: null,
+    },
+    siguiente.valor,
+    { motivo: 'REINTENTO_MANUAL' },
+  )
   if (!actualizada.ok) {
     return { ok: false, error: { codigo: 'ORDEN_INEXISTENTE', ordenId } }
   }
