@@ -30,20 +30,20 @@ npm --prefix packages/web exec playwright install chromium
 
 Desde la raíz:
 
-| Comando | Qué hace |
-|---|---|
-| `npm run dev:web` | Dev server en http://localhost:5173, con la API proxeada a `:3000` |
-| `npm run build:web` | Build a `public-dist/`, que es lo que sirve Express |
+| Comando             | Qué hace                                                           |
+| ------------------- | ------------------------------------------------------------------ |
+| `npm run dev:web`   | Dev server en http://localhost:5173, con la API proxeada a `:3000` |
+| `npm run build:web` | Build a `public-dist/`, que es lo que sirve Express                |
 
 Dentro de `packages/web`:
 
-| Comando | Qué hace |
-|---|---|
-| `npm test` | Tests unitarios (Vitest) |
-| `npm run test:e2e` | Tests funcionales (Playwright, viewport de la tablet) |
-| `npm run typecheck` | `tsc -b` |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier |
+| Comando             | Qué hace                                              |
+| ------------------- | ----------------------------------------------------- |
+| `npm test`          | Tests unitarios (Vitest)                              |
+| `npm run test:e2e`  | Tests funcionales (Playwright, viewport de la tablet) |
+| `npm run typecheck` | `tsc -b`                                              |
+| `npm run lint`      | ESLint                                                |
+| `npm run format`    | Prettier                                              |
 
 ## Cómo verlo funcionando
 
