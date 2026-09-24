@@ -37,6 +37,7 @@ import type { Reloj } from '../reloj.js'
 import type { DependenciasDelOrquestador, PuertoDeTransporte } from './ports.js'
 import { resolverSlotDeOrden } from './slotWait.js'
 import { calcularTiempos } from '../persistence/metricsRepository.js'
+import type { ClientRepository } from '../persistence/clientRepository.js'
 import type { MetricsRepository } from '../persistence/metricsRepository.js'
 
 function sinDoble(nombre: string): () => never {
@@ -206,8 +207,18 @@ function crearDoble(slotsIniciales: readonly SlotDeRobot[]): Doble {
     reporte: sinDoble('metricas.reporte'),
   }
 
+  // El padron de clientes lo usa la API, no el orquestador: estos tests nunca lo
+  // tocan, asi que el doble falla ruidoso si alguien lo llama sin querer.
+  const clientes: ClientRepository = {
+    registrarVisita: sinDoble('clientes.registrarVisita'),
+    listar: sinDoble('clientes.listar'),
+    banear: sinDoble('clientes.banear'),
+    desbanear: sinDoble('clientes.desbanear'),
+    buscar: sinDoble('clientes.buscar'),
+  }
+
   return {
-    repositorios: { robots, ordenes, pasos, slots, eventos: repositorioDeEventos, dispositivos, metricas },
+    repositorios: { robots, ordenes, pasos, slots, eventos: repositorioDeEventos, dispositivos, metricas, clientes },
     ordenes: ordenesPorId,
     slots: slotsPorCodigo,
   }
