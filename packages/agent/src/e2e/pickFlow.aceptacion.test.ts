@@ -14,11 +14,13 @@ import { setTimeout as dormir } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
 
 import { crearAgente } from '../composition.js'
+import { HEADER_DE_MANTENIMIENTO } from '../api/httpServer.js'
 
 const SITE_ID = 'sucursal-test'
 /** RF35: el id externo de una orden local se prefija con la identidad del agente. */
 const AGENT_ID = 'AG-TEST'
 const ROBOT_ID = '1'
+const TOKEN_DE_MANTENIMIENTO = 'token-de-prueba'
 const ESTANTERIA = '3X'
 
 /** Ubicacion de guardado del cajon que se va a buscar. */
@@ -104,10 +106,14 @@ async function obtener(url: string): Promise<RespuestaHttp> {
   return { status: respuesta.status, cuerpo }
 }
 
-async function postear(url: string, cuerpo: unknown): Promise<RespuestaHttp> {
+async function postear(
+  url: string,
+  cuerpo: unknown,
+  extra: Record<string, string> = {},
+): Promise<RespuestaHttp> {
   const respuesta = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extra },
     body: JSON.stringify(cuerpo),
   })
   const recibido: unknown = await respuesta.json()
@@ -176,7 +182,7 @@ describe('e2e del flujo de PICK en simulacion', () => {
         zonaDePickeo: ZONA_DE_PICKEO,
   // RF22: sin token configurado el comando directo a PLC queda deshabilitado.
   // Este fixture no lo usa, asi que va en null a proposito.
-  tokenDeMantenimiento: null,
+  tokenDeMantenimiento: TOKEN_DE_MANTENIMIENTO,
         // RF36/T26: el enlace con el servidor va APAGADO. Este flujo ejercita el
         // agente solo con su cola local, que es como arranca en el cutover.
         enlace: null,
@@ -214,21 +220,21 @@ describe('e2e del flujo de PICK en simulacion', () => {
         expect(zonaSembrada.valor.every((slot) => slot.estado.estado === 'LIBRE')).toBe(true)
 
         // --- Alta de los dos dispositivos del robot (201, contrato preservado) ---
-        const altaCarro = await postear(`${base}/api/devices/register`, {
-          robotId: ROBOT_ID,
-          type: 'CARRO',
-          host: '127.0.0.1',
-          port: 502,
-        })
+        // Lo que cambio del legacy es que ahora lleva el token de mantenimiento: el
+        // alta decide por que host y puerto se le habla al PLC.
+        const altaCarro = await postear(
+          `${base}/api/devices/register`,
+          { robotId: ROBOT_ID, type: 'CARRO', host: '127.0.0.1', port: 502 },
+          { [HEADER_DE_MANTENIMIENTO]: TOKEN_DE_MANTENIMIENTO },
+        )
         expect(altaCarro.status).toBe(201)
         expect(leer(altaCarro.cuerpo, 'ok')).toBe(true)
 
-        const altaElevador = await postear(`${base}/api/devices/register`, {
-          robotId: ROBOT_ID,
-          type: 'ELEVADOR',
-          host: '127.0.0.1',
-          port: 502,
-        })
+        const altaElevador = await postear(
+          `${base}/api/devices/register`,
+          { robotId: ROBOT_ID, type: 'ELEVADOR', host: '127.0.0.1', port: 502 },
+          { [HEADER_DE_MANTENIMIENTO]: TOKEN_DE_MANTENIMIENTO },
+        )
         expect(altaElevador.status).toBe(201)
         expect(leer(altaElevador.cuerpo, 'ok')).toBe(true)
 

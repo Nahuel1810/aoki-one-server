@@ -17,6 +17,7 @@
 // con la forma equivocada tiene que salir por 400 con el motivo, no reventar
 // adentro del orquestador con un mensaje que no le dice nada al operario.
 
+import { timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 
 import {
@@ -141,16 +142,37 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
    * Segundo nivel de RF22. Falla cerrado: sin token configurado no hay forma de
    * habilitar el endpoint, ni siquiera acertandole al header.
    */
+  /**
+   * Compara el token sin filtrar por cuanto tarda.
+   *
+   * Un `===` corta en el primer byte distinto, asi que el tiempo de respuesta
+   * dice cuantos caracteres se acerto y el token se puede adivinar de a uno. En
+   * una LAN es un riesgo chico, pero el servidor ya firma con `timingSafeEqual`
+   * y no hay motivo para que el agente sea el eslabon flojo.
+   *
+   * El largo se compara aparte porque `timingSafeEqual` tira si los buffers
+   * miden distinto; esa fuga —saber el largo del token— no sirve para adivinarlo.
+   */
+  function igualEnTiempoConstante(recibido: string | undefined, esperado: string): boolean {
+    if (recibido === undefined) {
+      return false
+    }
+    const a = Buffer.from(recibido)
+    const b = Buffer.from(esperado)
+    return a.length === b.length && timingSafeEqual(a, b)
+  }
+
   function exigirMantenimiento(req: Request, res: Response, next: NextFunction): void {
     if (tokenDeMantenimiento === null) {
       error(
         res,
         503,
-        'el comando directo a PLC esta deshabilitado: falta configurar el token de mantenimiento',
+        'sin AOKI_AGENT_TOKEN_DE_MANTENIMIENTO configurado no se puede ni mandar un comando directo ' +
+          'al PLC ni dar de alta un dispositivo: las dos cosas deciden que hace el robot',
       )
       return
     }
-    if (req.get(HEADER_DE_MANTENIMIENTO) !== tokenDeMantenimiento) {
+    if (!igualEnTiempoConstante(req.get(HEADER_DE_MANTENIMIENTO), tokenDeMantenimiento)) {
       error(res, 401, 'token de mantenimiento invalido o ausente')
       return
     }
@@ -591,7 +613,14 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   })
 
   // ---------------------------------------------------------------- dispositivos
-  app.post('/api/devices/register', (req: Request, res: Response) => {
+  //
+  // El alta de dispositivo EXIGE el token de mantenimiento (RF22, segundo nivel).
+  // No es una accion de la jornada: es la que dice por que host, puerto y unitId
+  // se le habla al PLC. Sin token, cualquiera que llegue al puerto del agente
+  // reapunta el Modbus del robot a una maquina suya, y a partir de ahi el robot
+  // obedece a otro. El resto de la API sigue sin credencial a proposito: el
+  // operario tiene que poder trabajar sin un secreto en la tablet.
+  app.post('/api/devices/register', exigirMantenimiento, (req: Request, res: Response) => {
     atender(res, async () => {
       const alta = validar(ALTA_DE_DISPOSITIVO, req.body, res)
       if (alta === null) {

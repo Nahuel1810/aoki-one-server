@@ -586,7 +586,10 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 - [x] **T15** `agent`: monitor de conectividad con backoff, recreación y cesión de socket (RF18).
       Cableado en `composition.ts` y reintento interno de transporte portado; los desvíos están
       declarados arriba, junto a RF20.
-- [x] **T16** `agent`: orquestador — loop por robot, retry, deadlines por paso y orden (RF13).
+- [~] **T16** `agent`: orquestador — loop por robot, retry, deadlines por paso y orden (RF13).
+      El loop y el retry estan. **Los deadlines NO**: `retryPolicy.ts` lo dice por escrito y
+      el RNF de latencia los sigue pidiendo. Decision del 2026-09-24: no se implementan por
+      ahora porque el robot opera supervisado. Queda abierto a proposito, no olvidado.
 - [x] **T17** `agent`: resolución de destino de PUT y devolución manual fuera-de-libros (RF11).
 - [x] **T18** `agent`: dedupe idempotente por `(siteId, externalOrderId)` (RF14) y rehidratación (RF15).
 - [x] **T19** `agent`: API HTTP local con validación zod, bind a la interfaz de LAN y token de mantenimiento para el comando directo a PLC (RF21, RF22).

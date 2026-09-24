@@ -157,10 +157,13 @@ function urlDe(agente: Agente, ruta: string): string {
   return `http://${direccion.host}:${String(direccion.puerto)}${ruta}`
 }
 
+  // El alta de dispositivo exige el token de mantenimiento: decide por que host y
+  // puerto se le habla al PLC. Va en el helper para que lo que estos tests afirman
+  // siga siendo la VALIDACION del cuerpo y no la autorizacion.
 function registrarDispositivo(agente: Agente, body: unknown): Promise<Response> {
   return fetch(urlDe(agente, '/api/devices/register'), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', [HEADER_DE_MANTENIMIENTO]: TOKEN },
     body: JSON.stringify(body),
   })
 }

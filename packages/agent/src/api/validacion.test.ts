@@ -8,7 +8,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { crearAgente, type Agente, type OpcionesDelAgente } from '../composition.js'
-import type { CuerpoDeRespuesta } from './httpServer.js'
+import { HEADER_DE_MANTENIMIENTO, type CuerpoDeRespuesta } from './httpServer.js'
+
+const TOKEN_DE_MANTENIMIENTO = 'token-de-prueba'
 
 const OPCIONES: OpcionesDelAgente = {
   siteId: 'SUC-TEST',
@@ -19,7 +21,7 @@ const OPCIONES: OpcionesDelAgente = {
   httpPuerto: 0,
   httpBind: '127.0.0.1',
   zonaDePickeo: ['3X02AE1'],
-  tokenDeMantenimiento: null,
+  tokenDeMantenimiento: TOKEN_DE_MANTENIMIENTO,
   // RF36/T26: el enlace con el servidor va APAGADO. Estos fixtures ejercitan el
   // agente solo con su cola local, que es como arranca en el cutover.
   enlace: null,
@@ -47,6 +49,9 @@ function urlDe(agente: Agente, ruta: string): string {
   return `http://${direccion.host}:${String(direccion.puerto)}${ruta}`
 }
 
+  // El alta de dispositivo exige el token de mantenimiento: decide por que host y
+  // puerto se le habla al PLC. Va en el helper para que lo que estos tests afirman
+  // siga siendo la VALIDACION del cuerpo y no la autorizacion.
 async function postear(
   agente: Agente,
   ruta: string,
@@ -54,7 +59,10 @@ async function postear(
 ): Promise<{ status: number; error: string }> {
   const respuesta = await fetch(urlDe(agente, ruta), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      [HEADER_DE_MANTENIMIENTO]: TOKEN_DE_MANTENIMIENTO,
+    },
     body: JSON.stringify(cuerpo),
   })
   const leido = (await respuesta.json()) as CuerpoDeRespuesta<unknown>

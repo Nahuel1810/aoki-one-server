@@ -37,6 +37,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { crearAgente, type Agente, type OpcionesDelAgente } from '../composition.js'
+import { HEADER_DE_MANTENIMIENTO } from './httpServer.js'
 import type { CuerpoDeRespuesta } from './httpServer.js'
 
 const SITE_ID = 'SUC-TEST'
@@ -128,10 +129,16 @@ function datosDe<T>(cuerpo: CuerpoDeRespuesta<T>): T {
   return cuerpo.data
 }
 
+  // El alta de dispositivo exige el token de mantenimiento: decide por que host y
+  // puerto se le habla al PLC. Va en el helper para que lo que estos tests afirman
+  // siga siendo la VALIDACION del cuerpo y no la autorizacion.
 function registrarCarro(agente: Agente): Promise<Response> {
   return fetch(urlDe(agente, '/api/devices/register'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      [HEADER_DE_MANTENIMIENTO]: TOKEN_DE_MANTENIMIENTO,
+    },
     body: JSON.stringify({ robotId: ROBOT_ID, type: 'CARRO', host: '192.168.1.10', port: 502 }),
   })
 }

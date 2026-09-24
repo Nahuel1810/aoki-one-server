@@ -212,18 +212,19 @@ beforeEach(async () => {
   }
   base = `http://${direccion.host}:${String(direccion.puerto)}`
 
-  await postear('/api/devices/register', {
-    robotId: ROBOT_ID,
-    type: 'CARRO',
-    host: '127.0.0.1',
-    port: 502,
-  })
-  await postear('/api/devices/register', {
-    robotId: ROBOT_ID,
-    type: 'ELEVADOR',
-    host: '127.0.0.1',
-    port: 502,
-  })
+  // El alta de dispositivo es SETUP, no la conducta que este test afirma, y desde
+  // que exige el token de mantenimiento pasarla por HTTP mezclaria la autorizacion
+  // con lo que se esta probando. Va por el repositorio, que es la misma escritura.
+  for (const tipo of ['CARRO', 'ELEVADOR'] as const) {
+    await agente.orquestador.repositorios.dispositivos.registrar({
+      robotId: ROBOT_ID,
+      tipo,
+      host: '127.0.0.1',
+      puerto: 502,
+      unitId: 1,
+      timeoutMsDeSocket: 2000,
+    })
+  }
 })
 
 afterEach(async () => {

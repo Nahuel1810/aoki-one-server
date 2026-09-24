@@ -1,10 +1,21 @@
-// RF22, segundo nivel: el token de mantenimiento del comando directo a PLC.
+// RF22, segundo nivel: el token de mantenimiento.
 //
-// Es el unico endpoint que escribe registros salteandose el orquestador y las
-// maquinas de estado, asi que falla CERRADO: sin token configurado no hay forma
-// de habilitarlo, ni siquiera acertandole al header. Mismo criterio que RF20 con
-// la simulacion — arrancar sin configurar no puede habilitar algo peligroso en
-// silencio.
+// Cubre las DOS operaciones que deciden que hace el robot:
+//
+//   - el comando directo a PLC, que escribe registros salteandose el orquestador
+//     y las maquinas de estado;
+//   - el ALTA DE DISPOSITIVO, que dice por que host, puerto y unitId se le habla
+//     al PLC. Sin credencial, cualquiera que llegue al puerto del agente reapunta
+//     el Modbus del robot a una maquina suya y a partir de ahi el robot le
+//     obedece a otro. Escribe un solo registro de la base, pero decide TODOS los
+//     que se escriben despues.
+//
+// Las dos fallan CERRADO: sin token configurado no hay forma de habilitarlas, ni
+// siquiera acertandole al header. Mismo criterio que RF20 con la simulacion —
+// arrancar sin configurar no puede habilitar algo peligroso en silencio.
+//
+// El resto de la API sigue SIN credencial y eso tambien se afirma aca: el
+// operario tiene que poder trabajar sin un secreto cargado en la tablet.
 
 import { describe, expect, it } from 'vitest'
 
@@ -43,12 +54,16 @@ function urlDe(agente: Agente, ruta: string): string {
   return `http://${direccion.host}:${String(direccion.puerto)}${ruta}`
 }
 
-async function registrarCarro(agente: Agente): Promise<void> {
-  const respuesta = await fetch(urlDe(agente, '/api/devices/register'), {
+function altaDeCarro(agente: Agente, headers: Record<string, string>): Promise<Response> {
+  return fetch(urlDe(agente, '/api/devices/register'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ robotId: '1', type: 'CARRO', host: '127.0.0.1', port: 502 }),
   })
+}
+
+async function registrarCarro(agente: Agente): Promise<void> {
+  const respuesta = await altaDeCarro(agente, { [HEADER_DE_MANTENIMIENTO]: TOKEN })
   expect(respuesta.status).toBe(201)
 }
 
@@ -65,7 +80,16 @@ describe('token de mantenimiento del comando directo a PLC (RF22)', () => {
     const agente = await levantar(BASE)
 
     try {
-      await registrarCarro(agente)
+      // Setup por el repositorio: este agente no tiene token, asi que el alta por
+      // HTTP tampoco estaria disponible — y lo que se afirma aca es el COMANDO.
+      await agente.orquestador.repositorios.dispositivos.registrar({
+        robotId: '1',
+        tipo: 'CARRO',
+        host: '127.0.0.1',
+        puerto: 502,
+        unitId: 1,
+        timeoutMsDeSocket: 2000,
+      })
 
       const respuesta = await comando(agente, {})
       // 503 y no 401: no es que falte la credencial, es que la capacidad no esta
@@ -114,14 +138,47 @@ describe('token de mantenimiento del comando directo a PLC (RF22)', () => {
     }
   })
 
-  it('el resto de la API no pide token: la tablet trabaja sin credencial', async () => {
+  it('el alta de dispositivo exige el token: sin el no se reapunta el PLC', async () => {
+    const agente = await levantar({ ...BASE, tokenDeMantenimiento: TOKEN })
+
+    try {
+      expect((await altaDeCarro(agente, {})).status).toBe(401)
+      expect((await altaDeCarro(agente, { [HEADER_DE_MANTENIMIENTO]: 'otro' })).status).toBe(401)
+
+      // Y el rechazo es ANTES de tocar la base: el dispositivo no quedo dado de alta.
+      const dispositivo = await agente.orquestador.repositorios.dispositivos.buscar('1', 'CARRO')
+      expect(dispositivo).toBeUndefined()
+
+      expect((await altaDeCarro(agente, { [HEADER_DE_MANTENIMIENTO]: TOKEN })).status).toBe(201)
+    } finally {
+      await agente.detener()
+    }
+  })
+
+  it('sin token configurado el alta tampoco se abre, igual que el comando', async () => {
     const agente = await levantar(BASE)
 
     try {
+      expect((await altaDeCarro(agente, {})).status).toBe(503)
+      expect((await altaDeCarro(agente, { [HEADER_DE_MANTENIMIENTO]: 'lo-que-sea' })).status).toBe(
+        503,
+      )
+    } finally {
+      await agente.detener()
+    }
+  })
+
+  it('el resto de la API no pide token: la tablet trabaja sin credencial', async () => {
+    const agente = await levantar({ ...BASE, tokenDeMantenimiento: TOKEN })
+
+    try {
       // El primer nivel de RF22 es de red (bind a la LAN), no de credencial.
+      // Estas son las rutas que usa la tablet en la jornada y NINGUNA lleva header.
       expect((await fetch(urlDe(agente, '/health'))).status).toBe(200)
       expect((await fetch(urlDe(agente, '/api/orders'))).status).toBe(200)
       expect((await fetch(urlDe(agente, '/api/slots'))).status).toBe(200)
+      expect((await fetch(urlDe(agente, '/api/orders/queue/status'))).status).toBe(200)
+      expect((await fetch(urlDe(agente, '/api/devices'))).status).toBe(200)
 
       // La lectura de estado del dispositivo tampoco: no escribe nada.
       await registrarCarro(agente)

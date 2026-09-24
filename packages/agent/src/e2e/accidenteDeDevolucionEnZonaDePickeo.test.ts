@@ -218,14 +218,18 @@ async function conPlanta(escenario: (planta: Planta) => Promise<void>): Promise<
     const zonaSembrada = await repositorios.slots.sembrarZonaDePickeo(ROBOT_ID, ZONA_DE_PICKEO)
     expect(zonaSembrada.ok).toBe(true)
 
+  // El alta de dispositivo es SETUP, no la conducta que este test afirma, y desde
+  // que exige el token de mantenimiento pasarla por HTTP mezclaria la autorizacion
+  // con lo que se esta probando. Va por el repositorio, que es la misma escritura.
     for (const tipo of ['CARRO', 'ELEVADOR'] as const) {
-      const alta = await postear(`${base}/api/devices/register`, {
+      await repositorios.dispositivos.registrar({
         robotId: ROBOT_ID,
-        type: tipo,
+        tipo,
         host: '127.0.0.1',
-        port: 502,
+        puerto: 502,
+        unitId: 1,
+        timeoutMsDeSocket: 2000,
       })
-      expect(alta.status).toBe(201)
     }
 
     await escenario({ agente, base })
