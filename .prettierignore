@@ -1,0 +1,21 @@
+node_modules/
+dist/
+packages/*/dist/
+public-dist/
+coverage/
+package-lock.json
+packages/web/
+
+# Codigo legacy en produccion: no se reformatea
+src/
+tests/
+scripts/
+public/
+data/
+
+# Documentacion existente (specs, OpenAPI, README): no se reformatea en esta fase
+docs/
+README.md
+
+# Worktrees de git: cada uno trae su propio repo y su propia config.
+.claude/
