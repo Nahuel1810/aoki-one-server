@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import type { EstadoSlot } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type EstadoSlot } from '@aoki-one/domain'
 
 import type {
   DeviceRepository,
@@ -137,6 +137,8 @@ function crearDoble(ordenesIniciales: readonly Orden[], robotsIniciales: readonl
       robotsPorId.set(robotId, actualizado)
       return Promise.resolve({ ok: true, valor: actualizado })
     },
+    fijarPausaDeCola: sinDoble('robots.fijarPausaDeCola'),
+    colaPausada: sinDoble('robots.colaPausada'),
   }
 
   const repositorioDeSlots: SlotRepository = {
@@ -224,6 +226,7 @@ function dependencias(repositorios: RepositoriosDelAgente): DependenciasDelOrque
     repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => 'ev-1',
   }
 }

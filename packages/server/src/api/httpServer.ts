@@ -19,7 +19,10 @@ import express from 'express'
 import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import { z } from 'zod'
 
+import type { CorrelacionDeOrden, Logger } from '@aoki-one/domain'
+
 import type { CredencialDeAgente, CredentialsRepository } from '../persistence/credentialsRepository.js'
+import type { PedidoDelServidor } from '../persistence/ordersRepository.js'
 import type { ColaDelServidor } from '../persistence/sqliteOrdersRepository.js'
 import { verificarFirma } from './hmac.js'
 import { ingresarPedido, responderIngreso } from './ordersIngest.js'
@@ -34,6 +37,14 @@ export interface DependenciasDelServidorHttp {
   readonly ahora: () => number
   readonly dormir: (ms: number) => Promise<void>
   readonly configuracion: ConfiguracionDelServidor
+  /**
+   * Logs estructurados de esta mitad del enlace (RNF de Observabilidad).
+   *
+   * No es opcional: el RNF pide "el mismo id de orden a los dos lados", y con un
+   * `logger?` el dia que alguien lo omita al componer desaparece una de las dos
+   * mitades en silencio y el cruce deja de existir sin que nada falle.
+   */
+  readonly logger: Logger
 }
 
 export interface ConfiguracionDelServidor {
@@ -126,8 +137,24 @@ export function crearServidorHttp(dependencias: DependenciasDelServidorHttp): Se
 }
 
 function construirApp(dependencias: DependenciasDelServidorHttp): express.Express {
-  const { cola, credenciales, ahora, dormir, configuracion } = dependencias
+  const { cola, credenciales, ahora, dormir, configuracion, logger } = dependencias
   const arrancadoEn = ahora()
+
+  /**
+   * La correlacion de un pedido del libro de ESTE servidor.
+   *
+   * `ordenIdLocal` va en `null` y no ausente: el id del libro del agente existe,
+   * pero de este lado no se conoce. Decirlo explicitamente es lo que distingue
+   * "no lo se" de "me lo olvide" cuando alguien cruza las dos mitades.
+   */
+  function correlacionDe(pedido: PedidoDelServidor): CorrelacionDeOrden {
+    return {
+      siteId: pedido.siteId,
+      ordenId: pedido.id,
+      ordenIdLocal: null,
+      externalOrderId: pedido.externalOrderId,
+    }
+  }
 
   const app = express()
   // El body crudo se guarda para verificar la firma: dos JSON equivalentes tienen
@@ -175,9 +202,20 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
    * pertenece el recurso: autenticar no es autorizar.
    */
   const autenticarPorFirma = asincrono(async (req, res, next) => {
+    // Un rechazo de autenticacion es lo PRIMERO que se mira cuando una sucursal
+    // deja de reportar, y sin log no se distingue de una sucursal apagada: en
+    // los dos casos el sintoma es el mismo silencio. Va con el keyId y la ruta
+    // —nunca con la firma ni el secreto— porque el keyId es un identificador y
+    // es con lo que se busca la credencial en la base.
+    const rechazar = (estado: number, mensaje: string, datos: Record<string, unknown>): void => {
+      const nivel = estado >= 500 ? 'error' : 'warn'
+      logger[nivel]('AUTH_REJECTED', { ...datos, ruta: req.path, metodo: req.method })
+      error(res, estado, mensaje)
+    }
+
     const keyId = req.get(HEADER_KEY_ID)
     if (keyId === undefined) {
-      error(res, 401, 'falta el identificador de credencial')
+      rechazar(401, 'falta el identificador de credencial', { motivo: 'SIN_KEY_ID' })
       return
     }
 
@@ -187,10 +225,13 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         // El servidor no puede recomputar la firma de esta credencial: es su
         // problema de configuracion, no del cliente. Un 401 mandaria al agente
         // a reemitir una credencial que esta bien.
-        error(res, 500, 'no se pudo leer el material de la credencial')
+        rechazar(500, 'no se pudo leer el material de la credencial', {
+          motivo: resuelto.error.codigo,
+          keyId,
+        })
         return
       }
-      error(res, 401, 'credencial invalida o revocada')
+      rechazar(401, 'credencial invalida o revocada', { motivo: resuelto.error.codigo, keyId })
       return
     }
 
@@ -210,7 +251,14 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
       ventanaMs: configuracion.ventanaDeFirmaMs,
     })
     if (!firma.ok) {
-      error(res, 401, `firma rechazada: ${firma.error.codigo}`)
+      rechazar(401, `firma rechazada: ${firma.error.codigo}`, {
+        motivo: firma.error.codigo,
+        keyId,
+        // La credencial existe: el que no cierra es el material con el que
+        // firmo. Un secreto desactualizado despues de una rotacion y un reloj
+        // corrido se ven distinto aca, y es lo que decide a quien llamar.
+        siteId: resuelto.valor.credencial.siteId,
+      })
       return
     }
 
@@ -253,6 +301,16 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
         tipo: alta.tipo,
         locationCode: alta.locationCode,
       })
+      // Primer punto del hilo: aca nace el `ordenId` con el que despues se
+      // cruzan el log del agente y el de este servidor.
+      logger.paraOrden(correlacionDe(resultado.pedido)).info('ORDER_INGESTED', {
+        tipo: resultado.pedido.tipo,
+        locationCode: resultado.pedido.locationCode,
+        // Un reenvio no crea una segunda orden (RF26). Se dice cual de los dos
+        // fue para que dos lineas de la misma orden no se lean como dos altas.
+        creado: resultado.tipo === 'CREADO',
+      })
+
       const respuesta = responderIngreso(resultado)
       ok(res, respuesta.estadoHttp, respuesta.cuerpo.data, respuesta.cuerpo.created)
     }),
@@ -331,6 +389,16 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
           configuracion.duracionDelLeaseMs,
         )
         if (reclamados.length > 0) {
+          // Una linea por orden y no una por lote: el lote es un detalle del
+          // transporte, y lo que hay que poder seguir es la ORDEN. Con el lease
+          // adentro se ve, sin abrir la base, si una re-entrega fue por lease
+          // vencido y cuando vence la actual.
+          for (const reclamado of reclamados) {
+            logger.paraOrden(correlacionDe(reclamado)).info('WORK_LEASED', {
+              agentId: reclamado.agentId,
+              leaseVenceEn: reclamado.leaseVenceEn,
+            })
+          }
           ok(res, 200, reclamados)
           return
         }
@@ -384,6 +452,38 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
       // agente: su outbox reintenta hasta tener confirmacion, y un 4xx lo haria
       // reintentar para siempre algo que ya se aplico.
       //
+      // El cierre del hilo: la misma orden que se logueo al entrar y al
+      // entregarse, ahora con lo que la sucursal reporto de ella.
+      const deLaOrden = logger.paraOrden({
+        siteId: credencial.siteId,
+        ordenId: reporte.ordenId,
+        ordenIdLocal: null,
+        // `null` cuando la orden no esta en el libro: el agente reporta por
+        // ordenId y el externo es lo unico que aca no se puede inventar.
+        externalOrderId: orden?.externalOrderId ?? null,
+      })
+      const datosDeLaTransicion = { seq: reporte.seq, estado: reporte.estado }
+      switch (resultado.tipo) {
+        case 'APLICADA':
+          deLaOrden.info('TRANSITION_APPLIED', datosDeLaTransicion)
+          break
+        case 'DESCARTADA':
+          // WARN y no INFO: descartar es lo normal cuando el outbox reintenta
+          // (RF34), pero un descarte que se repite es un agente que no esta
+          // recibiendo la confirmacion, y eso no se ve en ningun otro lado.
+          deLaOrden.warn('TRANSITION_DISCARDED', {
+            ...datosDeLaTransicion,
+            motivo: resultado.motivo,
+          })
+          break
+        case 'ORDEN_INEXISTENTE':
+          deLaOrden.warn('TRANSITION_DISCARDED', {
+            ...datosDeLaTransicion,
+            motivo: resultado.tipo,
+          })
+          break
+      }
+
       // ORDEN_INEXISTENTE tampoco puede ser un 404. El agente no tiene como
       // distinguir ese 404 del que devuelve esta misma API cuando la ruta no
       // existe —un proxy mal configurado, una base de URL con un prefijo de mas—,
@@ -457,10 +557,20 @@ function construirApp(dependencias: DependenciasDelServidorHttp): express.Expres
    * solo por su aridad, y solo atiende lo que se registro despues del handler
    * que fallo. `_siguiente` existe por eso, aunque no se use.
    */
-  app.use((causa: unknown, _req: Request, res: Response, _siguiente: NextFunction): void => {
+  app.use((causa: unknown, req: Request, res: Response, _siguiente: NextFunction): void => {
     // Un 500 sin rastro es indebuggeable: el cliente no ve el detalle a
-    // proposito, asi que el unico lugar donde queda es el log del servidor.
-    console.error('[servidor] fallo no controlado en una request:', causa)
+    // proposito, asi que el unico lugar donde queda es el log del servidor. Va
+    // por el logger y no por `console.error` para que salga con la misma forma
+    // que el resto: un segundo formato es una linea que el recolector no parsea
+    // y que nadie encuentra cuando la busca.
+    logger.error('REQUEST_FAILED', {
+      ruta: req.path,
+      metodo: req.method,
+      detalle: causa instanceof Error ? causa.message : String(causa),
+      // El stack no viaja al cliente (ver abajo) y aca si hace falta: sin el,
+      // "error interno" no dice en que capa se rompio.
+      stack: causa instanceof Error ? causa.stack : undefined,
+    })
 
     if (res.headersSent) {
       // Ya se empezo a escribir la respuesta: cambiarle el status es imposible y

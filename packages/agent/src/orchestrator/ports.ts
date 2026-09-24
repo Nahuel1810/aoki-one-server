@@ -4,7 +4,7 @@
 // ejercitar entero con un doble, sin Modbus ni HTTP. El mutex por dispositivo y
 // la escalera de recuperacion quedan del otro lado del puerto.
 
-import type { Result, TipoDispositivo } from '@aoki-one/domain'
+import type { Logger, Result, TipoDispositivo } from '@aoki-one/domain'
 
 import type { RepositoriosDelAgente } from '../persistence/index.js'
 import type { Reloj } from '../reloj.js'
@@ -65,6 +65,15 @@ export interface DependenciasDelOrquestador extends DependenciasDePaso {
   readonly agentId: string
   /** Generador de ids. Se inyecta: la logica no llama a `randomUUID` directo (RNF). */
   readonly generarId: () => string
+  /**
+   * Logger estructurado (RNF de Observabilidad).
+   *
+   * Se inyecta y es OBLIGATORIO. Obligatorio porque no es una capacidad que a
+   * veces no este: el que llama siempre loguea y lo que cambia es a donde va.
+   * Inyectado porque un logger que escribe a stdout en los tests es ruido: ahi
+   * entra `LOGGER_SILENCIOSO` o un doble que acumula en memoria.
+   */
+  readonly logger: Logger
   /**
    * Cola de salida de transiciones (RF34).
    *

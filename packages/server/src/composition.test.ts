@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { crearServidor } from './composition.js'
 import { generarClaveDeCifrado, VARIABLE_DE_CLAVE } from './persistence/cifrado.js'
 
@@ -15,6 +17,9 @@ const BASE: Parameters<typeof crearServidor>[0] = {
   rutaDeBase: ':memory:',
   httpPuerto: 0,
   httpBind: '127.0.0.1',
+  // El default del servidor escribe a stdout, que es lo que hace falta en
+  // produccion y ruido en la suite. Lo que se afirma aca no es el log.
+  logger: LOGGER_SILENCIOSO,
 }
 
 describe('arranque del servidor sin la clave de cifrado', () => {

@@ -6,6 +6,8 @@
 
 import { randomUUID } from 'node:crypto'
 
+import type { Logger } from '@aoki-one/domain'
+
 import { crearServidorHttp } from './api/httpServer.js'
 import { rehidratar } from './orchestrator/rehydrate.js'
 import { ejecutarCicloDeRobot } from './orchestrator/robotLoop.js'
@@ -13,7 +15,15 @@ import type { DireccionDeEscucha, ServidorHttp } from './api/httpServer.js'
 import type { DependenciasDelOrquestador } from './orchestrator/ports.js'
 import { abrirBase } from './persistence/database.js'
 import { crearRepositorios } from './persistence/index.js'
+import {
+  crearPurgaDelAgente,
+  programarPurga,
+  RETENCION_POR_DEFECTO,
+  type PoliticaDeRetencion,
+  type PurgaProgramada,
+} from './persistence/retencion.js'
 import { crearRelojDelSistema } from './reloj.js'
+import { crearLoggerDelAgente } from './registro.js'
 import { BACKOFF_DEL_ENLACE, crearAzarDelSistema } from './sync/backoff.js'
 import { crearEnlace, OPCIONES_DE_ENLACE_POR_DEFECTO, type Enlace } from './sync/link.js'
 import { crearOrigenPorLongPoll } from './sync/orderSource.js'
@@ -21,6 +31,7 @@ import { crearOutboxSqlite } from './sync/outbox.js'
 import { crearClienteHttp, TIEMPOS_DEL_CLIENTE_POR_DEFECTO } from './sync/serverClient.js'
 import { crearDeviceMutex } from './transport/deviceMutex.js'
 import { crearPuertoDeTransporte } from './transport/transportePort.js'
+import type { PuertoDeTransporteConcreto } from './transport/transportePort.js'
 
 /**
  * Enlace con el servidor de pedidos (RF28, RF32).
@@ -62,7 +73,45 @@ export interface OpcionesDelAgente {
    * conectarse a nada en silencio.
    */
   readonly enlace: OpcionesDeEnlaceDelAgente | null
+  /**
+   * Destino de los logs estructurados (RNF de Observabilidad).
+   *
+   * Ausente = stdout. Se inyecta para que los tests puedan afirmar lo que se
+   * loguea, o callarlo: un logger que escribe a stdout en la suite es ruido.
+   */
+  readonly logger?: Logger
+  /**
+   * Puerto de transporte al PLC. Ausente = el Modbus real, o su modo simulacion
+   * cuando `simularPlc` esta en true.
+   *
+   * Se inyecta por lo mismo que el logger: el modo simulacion contesta OK
+   * SIEMPRE, y un PLC que nunca falla no deja probar el camino de RF13 —un paso
+   * que falla, la orden en ERROR, el slot conservando su estado y el retry
+   * replayando desde HOMING—, que es justo el que tiene que funcionar el dia que
+   * algo se traba en planta.
+   */
+  readonly transporte?: PuertoDeTransporteConcreto
+  /** Cuanto se conserva cada cosa antes de purgarla. Ausente = los defaults. */
+  readonly retencion?: PoliticaDeRetencion
+  /**
+   * Cada cuanto corre la purga. Ausente = una vez por hora.
+   *
+   * No es configuracion de afinado: es lo que hace que la purga corra SOLA. En
+   * una notebook de sucursal que nadie mantiene, una purga que depende de que
+   * alguien se acuerde de ejecutarla es una purga que no existe.
+   */
+  readonly intervaloDePurgaMs?: number
 }
+
+/**
+ * Una pasada por hora.
+ *
+ * El corte es por antiguedad en dias, asi que la frecuencia exacta no cambia que
+ * se borra: solo cuanto tarda en notarse. Una vez por hora mantiene el trabajo
+ * de cada pasada chico —nunca se acumula un dia entero de filas— sin competir
+ * por el disco con la maniobra.
+ */
+const INTERVALO_DE_PURGA_POR_DEFECTO_MS = 60 * 60 * 1000
 
 export interface Agente {
   readonly iniciar: () => Promise<void>
@@ -102,14 +151,18 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
   const repositorios = crearRepositorios(base)
   const reloj = crearRelojDelSistema()
   const mutex = crearDeviceMutex()
+  const logger = opciones.logger ?? crearLoggerDelAgente()
+  const purga = crearPurgaDelAgente(base, opciones.retencion ?? RETENCION_POR_DEFECTO)
 
-  const transporte = crearPuertoDeTransporte({
-    mutex,
-    reloj,
-    tiempos: TIEMPOS_DE_HANDSHAKE,
-    simularPlc: opciones.simularPlc,
-    buscarDispositivo: (robotId, tipo) => repositorios.dispositivos.buscar(robotId, tipo),
-  })
+  const transporte =
+    opciones.transporte ??
+    crearPuertoDeTransporte({
+      mutex,
+      reloj,
+      tiempos: TIEMPOS_DE_HANDSHAKE,
+      simularPlc: opciones.simularPlc,
+      buscarDispositivo: (robotId, tipo) => repositorios.dispositivos.buscar(robotId, tipo),
+    })
 
   // El outbox existe solo si hay enlace: una cola de salida que nadie drena solo
   // crece (RF34).
@@ -121,6 +174,7 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     agentId: opciones.agentId,
     // Se inyecta: la logica no llama a randomUUID directo (RNF de Calidad).
     generarId: () => randomUUID(),
+    logger,
     transporte,
     reloj,
     politica: POLITICA_DE_REINTENTOS,
@@ -215,6 +269,7 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
 
   let direccion: DireccionDeEscucha | null = null
   let bucleTerminado: Promise<void> = Promise.resolve()
+  let purgaProgramada: PurgaProgramada | null = null
 
   return {
     api,
@@ -241,6 +296,26 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
         direccion = await api.escuchar(opciones.httpPuerto, opciones.httpBind)
       }
 
+      // La purga arranca con el agente y corre sola de ahi en mas. Antes del
+      // bucle: la primera pasada es la que recupera el disco despues de que el
+      // agente estuvo apagado unos dias.
+      purgaProgramada = programarPurga({
+        purga,
+        intervaloMs: opciones.intervaloDePurgaMs ?? INTERVALO_DE_PURGA_POR_DEFECTO_MS,
+        ahoraMs: () => reloj.ahoraMs(),
+        alTerminar: (resultado) => {
+          logger.info('RETENTION_PURGED', { ...resultado })
+        },
+        alFallar: (error) => {
+          // Una purga que falla no puede tumbar al proceso que maneja el robot:
+          // lo que se deja de borrar es historia vieja, lo que se dejaria de
+          // atender son maniobras de ahora.
+          logger.error('RETENTION_PURGE_FAILED', {
+            mensaje: error instanceof Error ? error.message : String(error),
+          })
+        },
+      })
+
       corriendo = true
       bucleTerminado = bucle()
       // El enlace arranca DESPUES del loop: primero el agente queda en
@@ -249,6 +324,8 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     },
 
     detener: async () => {
+      purgaProgramada?.detener()
+      purgaProgramada = null
       if (enlace !== null) {
         await enlace.detener()
       }

@@ -14,6 +14,8 @@
 // reportar— a ejercitar la escritura conjunta. La invariante que afirman es la
 // misma: con la cola de salida rota, el ESTADO se escribe igual.
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { randomUUID } from 'node:crypto'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -86,6 +88,7 @@ beforeEach(async () => {
     repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => randomUUID(),
     transporte: TRANSPORTE_QUE_CONFIRMA,
     reloj: RELOJ,

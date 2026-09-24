@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import type { EstadoSlot, Result, TipoDispositivo } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type EstadoSlot, type Result, type TipoDispositivo } from '@aoki-one/domain'
 
 import type {
   DeviceRepository,
@@ -170,6 +170,10 @@ function crearDoble(): Doble {
       const ok: Result<Robot, ErrorDeRobot> = { ok: true, valor: actualizado }
       return Promise.resolve(ok)
     },
+    fijarPausaDeCola: sinDoble('robots.fijarPausaDeCola'),
+    // La cola de este banco nunca esta pausada: la pausa se ejercita de punta a
+    // punta en la suite de la API, donde hay loop de verdad al que frenar.
+    colaPausada: () => Promise.resolve(false),
   }
 
   const slots: SlotRepository = {
@@ -280,6 +284,7 @@ function dependencias(doble: Doble): DependenciasDelOrquestador {
     repositorios: doble.repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => 'ev-1',
   }
 }

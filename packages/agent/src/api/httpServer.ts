@@ -29,9 +29,13 @@ import express from 'express'
 import type { NextFunction, Request, Response } from 'express'
 import { z } from 'zod'
 
+import { cancelarOrden } from '../orchestrator/cancel.js'
+import type { ErrorDeCancelacionDeOrden } from '../orchestrator/cancel.js'
 import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador } from '../orchestrator/ports.js'
+import type { SlotDeRobot } from '../persistence/slotRepository.js'
 import { reintentarOrden } from '../orchestrator/retry.js'
+import type { DispositivoRegistrado } from '../transport/modbusClient.js'
 import { ENLACE_APAGADO, type ReporteDeEnlace } from '../sync/link.js'
 
 export type CuerpoDeRespuesta<T> =
@@ -153,7 +157,9 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     handler().catch((causa: unknown) => {
       // Un 500 sin rastro es indebuggeable: el detalle no sale en la respuesta a
       // proposito, asi que el unico lugar donde queda es el log del agente.
-      console.error('[agente] fallo no controlado en una request:', causa)
+      dependencias.orquestador.logger.error('API_UNHANDLED_FAILURE', {
+      mensaje: causa instanceof Error ? causa.message : String(causa),
+    })
 
       if (res.headersSent) {
         // Ya se empezo a escribir la respuesta: cambiarle el status es imposible
@@ -302,6 +308,26 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     })
   })
 
+  // RF21 — El boton de pausar/reanudar la cola de la tablet.
+  //
+  // Van ANTES de /api/orders/:id/retry por claridad, aunque no compitan: son
+  // cuatro segmentos contra tres y el router no los puede confundir.
+  //
+  // Pausar NO aborta: lo unico que cambia es que el loop deja de tomar ordenes
+  // nuevas de ese robot. La que ya esta en curso la termina el ciclo que la
+  // arranco. Reanudar despierta el loop para que no espere al tick de seguridad.
+  app.post('/api/orders/queue/:robotId/pause', (req: Request, res: Response) => {
+    atender(res, async () => {
+      await fijarPausa(texto(req.params['robotId']), true, res)
+    })
+  })
+
+  app.post('/api/orders/queue/:robotId/resume', (req: Request, res: Response) => {
+    atender(res, async () => {
+      await fijarPausa(texto(req.params['robotId']), false, res)
+    })
+  })
+
   app.post('/api/orders/simulate', (req: Request, res: Response) => {
     atender(res, async () => {
       const pedido = validar(SIMULACION, req.body, res)
@@ -392,6 +418,25 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     })
   })
 
+  // RF21 — El boton de cancelar de la tablet.
+  app.post('/api/orders/:id/cancel', (req: Request, res: Response) => {
+    atender(res, async () => {
+      const resultado = await cancelarOrden(orquestador, texto(req.params['id']))
+      if (!resultado.ok) {
+        // El 409 no es decorativo: el front muestra el texto tal cual, y lo que
+        // el operario necesita saber es que el pedido sigue vivo porque el robot
+        // ya lo esta haciendo, no que "fallo".
+        error(
+          res,
+          resultado.error.codigo === 'ORDEN_INEXISTENTE' ? 404 : 409,
+          mensajeDeCancelacion(resultado.error),
+        )
+        return
+      }
+      ok(res, 200, aOrdenDeApi(resultado.valor))
+    })
+  })
+
   app.get('/api/orders/:id', (req: Request, res: Response) => {
     atender(res, async () => {
       const orden = await repositorios.ordenes.buscarPorId(texto(req.params['id']))
@@ -410,26 +455,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       const zonas = await Promise.all(
         robots.map(async (robot) => repositorios.slots.listarPorRobot(robot.id)),
       )
-      ok(
-        res,
-        200,
-        zonas.flat().map((slot) => ({
-          locationCode: slot.locationCode,
-          robotId: slot.robotId,
-          // `side` y `robotId` los agrega esta version: sin ellos el front tendria
-          // que reimplementar la regla de paridad del modulo.
-          side: slot.lado,
-          status: slot.estado.estado,
-          currentBox:
-            'contenido' in slot.estado && slot.estado.contenido !== null
-              ? {
-                  id: slot.estado.contenido.cajon.id,
-                  sourceLocationCode: slot.estado.contenido.cajon.ubicacionDeOrigen,
-                  pendingReturns: slot.estado.contenido.pendingReturns,
-                }
-              : null,
-        })),
-      )
+      ok(res, 200, zonas.flat().map(aSlotDeApi))
     })
   })
 
@@ -492,6 +518,22 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     })
   })
 
+  // RF21: listado de dispositivos. El front lo consume plano, sin agrupar por
+  // robot, porque su pantalla de diagnostico es una fila por dispositivo.
+  app.get('/api/devices', (_req: Request, res: Response) => {
+    atender(res, async () => {
+      const robots = await repositorios.robots.listar(siteId)
+      const porRobot = await Promise.all(
+        robots.map((robot) => repositorios.dispositivos.listarPorRobot(robot.id)),
+      )
+      ok(
+        res,
+        200,
+        porRobot.flat().map((dispositivo) => aDispositivoDeApi(dispositivo, simularPlc)),
+      )
+    })
+  })
+
   app.get('/api/devices/robots', (_req: Request, res: Response) => {
     atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
@@ -504,7 +546,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
             robotId: robot.id,
             status: robot.estado,
             currentOrderId: robot.ordenActivaId,
-            devices: await repositorios.dispositivos.listarPorRobot(robot.id),
+            // Los dispositivos salen con la MISMA forma que en GET /api/devices:
+            // el front los valida con un solo esquema y los muestra en las dos
+            // pantallas, asi que dos formas distintas rompen una de las dos.
+            devices: (await repositorios.dispositivos.listarPorRobot(robot.id)).map(
+              (dispositivo) => aDispositivoDeApi(dispositivo, simularPlc),
+            ),
             // El legacy devolvia {} aca: armaba la promesa y no la esperaba.
             queue: await snapshotDeCola(robot.id),
           })),
@@ -568,6 +615,42 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     error(res, 404, 'ruta no encontrada')
   })
 
+  /**
+   * Pausa o reanuda la cola de un robot y contesta con la cola ya actualizada.
+   *
+   * El robot tiene que existir: pausar la cola de un id inventado aceptaria en
+   * silencio una pausa que despues nadie puede reanudar desde el front, porque
+   * ese robot no aparece en ninguna pantalla.
+   */
+  async function fijarPausa(robotId: string, pausada: boolean, res: Response): Promise<void> {
+    const cambio = await repositorios.robots.fijarPausaDeCola(
+      robotId,
+      pausada,
+      orquestador.reloj.ahoraMs(),
+    )
+    if (!cambio.ok) {
+      error(res, 404, cambio.error.codigo)
+      return
+    }
+
+    await repositorios.eventos.registrar({
+      id: orquestador.generarId(),
+      ts: orquestador.reloj.ahoraMs(),
+      tipoDeEntidad: 'ROBOT',
+      entidadId: robotId,
+      evento: pausada ? 'QUEUE_PAUSED' : 'QUEUE_RESUMED',
+      severidad: 'INFO',
+      metadata: {},
+    })
+
+    if (!pausada) {
+      // Sin esto la cola reanudada espera al tick de seguridad, que a proposito
+      // es de baja frecuencia: el operario apreta "Reanudar" y no pasa nada.
+      despertar()
+    }
+    ok(res, 200, await snapshotDeCola(robotId))
+  }
+
   async function snapshotDeCola(robotId: string): Promise<{
     robotId: string
     activeOrderId: string | null
@@ -585,8 +668,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       robotId,
       activeOrderId: robot?.ordenActivaId ?? null,
       queueLength: pendientes.length,
-      // La pausa de cola entra con su test: hoy ninguna orden se pausa.
-      paused: false,
+      paused: await repositorios.robots.colaPausada(robotId),
       queuedOrderIds: pendientes.map((orden) => orden.id),
     }
   }
@@ -635,6 +717,78 @@ const RANGO_DE_REPORTE = z.object({
   startDate: z.coerce.number().int().optional(),
   endDate: z.coerce.number().int().optional(),
 })
+
+/**
+ * Forma de un slot de pickeo tal como la consume el front.
+ *
+ * `side`, `robotId`, `level` y `position` son derivados del `locationCode` que
+ * agrega esta version: el tablero los usa para armar la grilla (una fila por
+ * nivel, ordenada por posicion) y sin ellos tendria que reimplementar la
+ * gramatica de ubicaciones, que es dominio y vive de un solo lado.
+ *
+ * `reservedByOrderId` es lo que le permite al tablero decir QUE pedido esta en
+ * camino sobre un slot en maniobra, y no solo que hay uno.
+ */
+function aSlotDeApi(slot: SlotDeRobot): Record<string, unknown> {
+  const ubicacion = parsearLocationCode(slot.locationCode)
+  const contenido = 'contenido' in slot.estado ? slot.estado.contenido : null
+
+  return {
+    // Identidad estable de un slot: es de UN robot y de una ubicacion. Sirve de
+    // clave del lado del front, que no puede asumir que dos robots no compartan
+    // un locationCode.
+    id: `${slot.robotId}:${slot.locationCode}`,
+    locationCode: slot.locationCode,
+    robotId: slot.robotId,
+    side: slot.lado,
+    level: ubicacion.ok ? ubicacion.valor.nivel : null,
+    position: ubicacion.ok ? ubicacion.valor.posicion : null,
+    status: slot.estado.estado,
+    // Quien lo tiene tomado AHORA. Un slot OCUPADO no lo retiene nadie: el cajon
+    // esta apoyado y la orden que lo trajo ya termino.
+    reservedByOrderId: 'ordenId' in slot.estado ? slot.estado.ordenId : null,
+    lastError: slot.estado.estado === 'ERROR' ? slot.estado.motivo : null,
+    updatedAt: slot.actualizadoEn,
+    currentBox:
+      contenido === null
+        ? null
+        : {
+            id: contenido.cajon.id,
+            sourceLocationCode: contenido.cajon.ubicacionDeOrigen,
+            pendingReturns: contenido.pendingReturns,
+          },
+  }
+}
+
+/**
+ * Forma de un dispositivo tal como la consume el front.
+ *
+ * `status` y `lastSeen` son diagnostico, y hoy salen de lo mismo que `/health`:
+ * en simulacion se reporta conectado a proposito —es el modo en el que el agente
+ * se prueba sin PLC— y en vivo se reporta DISCONNECTED porque el agente todavia
+ * no persiste la conectividad por dispositivo. Decir CONNECTED sin haber hablado
+ * con el PLC seria peor que decir que no se sabe.
+ */
+function aDispositivoDeApi(
+  dispositivo: DispositivoRegistrado,
+  simularPlc: boolean,
+): Record<string, unknown> {
+  return {
+    // La identidad de un dispositivo es `<robotId>:<TIPO>`: un robot tiene un
+    // carro y un elevador, no dos de ninguno.
+    id: `${dispositivo.robotId}:${dispositivo.tipo}`,
+    robotId: dispositivo.robotId,
+    type: dispositivo.tipo,
+    host: dispositivo.host,
+    port: dispositivo.puerto,
+    unitId: dispositivo.unitId,
+    timeoutMs: dispositivo.timeoutMsDeSocket,
+    status: simularPlc ? 'CONNECTED' : 'DISCONNECTED',
+    lastCommand: null,
+    lastSeen: null,
+    updatedAt: null,
+  }
+}
 
 /** Forma que consume el front. Se mantiene la del legacy para no romperlo. */
 function aOrdenDeApi(orden: {
@@ -685,6 +839,25 @@ function mensajeDeAdmision(codigo: string): string {
       return 'no hay robot registrado para esa estanteria'
     default:
       return codigo
+  }
+}
+
+/**
+ * Mensaje para el operario cuando la cancelacion no procede.
+ *
+ * Los dos rechazos dicen cosas distintas y el operario hace cosas distintas con
+ * cada uno: uno espera a que el robot termine, el otro reintenta.
+ */
+function mensajeDeCancelacion(error: ErrorDeCancelacionDeOrden): string {
+  switch (error.codigo) {
+    case 'ORDEN_INEXISTENTE':
+      return 'ORDEN_INEXISTENTE'
+    case 'ORDEN_NO_CANCELABLE':
+      return error.estado === 'IN_PROGRESS'
+        ? 'no se puede cancelar un pedido que el robot ya esta ejecutando'
+        : `no se puede cancelar un pedido en ${error.estado}`
+    case 'ORDEN_CON_SLOT_TOMADO':
+      return `el pedido todavia tiene tomado el slot ${error.slotLocationCode}: reintentalo para que el robot lo libere`
   }
 }
 

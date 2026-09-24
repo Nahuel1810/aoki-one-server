@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import type { EstadoSlot, Result } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type EstadoSlot, type Result } from '@aoki-one/domain'
 
 import type {
   DeviceRepository,
@@ -163,6 +163,8 @@ function crearDoble(slotsIniciales: readonly SlotDeRobot[]): Doble {
     buscarPorEstanteria: () => Promise.resolve(ROBOT),
     listar: () => Promise.resolve([ROBOT]),
     fijarOrdenActiva: sinDoble('robots.fijarOrdenActiva'),
+    fijarPausaDeCola: sinDoble('robots.fijarPausaDeCola'),
+    colaPausada: sinDoble('robots.colaPausada'),
   }
 
   const repositorioDeEventos: EventRepository = {
@@ -237,6 +239,7 @@ function dependencias(repositorios: RepositoriosDelAgente): DependenciasDelOrque
     repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => 'ev-1',
   }
 }
@@ -255,7 +258,13 @@ describe('resolucion del slot de una orden (portado de orchestrator.test.js)', (
 
     // Mismo nivel y mismo modulo que el origen 3X04AE1: desempata la posicion
     // menor, que es ABSOLUTA (1 antes que 2 antes que 3).
-    expect(resolucion).toEqual({ tipo: 'SLOT_ASIGNADO', slotLocationCode: '3X02AE1' })
+    // `targetLocation` viaja en toda resolucion porque un PUT lo necesita
+    // resuelto contra el cajon en libros (RF11); en un PICK es el de la orden.
+    expect(resolucion).toEqual({
+      tipo: 'SLOT_ASIGNADO',
+      slotLocationCode: '3X02AE1',
+      targetLocation: null,
+    })
     expect(doble.ordenes.get('o-1')?.slotLocationCode).toBe('3X02AE1')
     expect(doble.slots.get('3X02AE1')?.estado).toEqual({
       estado: 'RESERVADO',

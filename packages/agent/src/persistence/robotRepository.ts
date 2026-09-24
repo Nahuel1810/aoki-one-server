@@ -46,6 +46,19 @@ export interface RobotRepository {
     robotId: string,
     ordenId: string | null,
   ) => Promise<Result<Robot, ErrorDeRobot>>
+  /**
+   * Pausa o reanuda la COLA del robot (RF21).
+   *
+   * Pausar no es abortar: lo unico que cambia es que el loop deja de TOMAR
+   * ordenes nuevas. La que ya esta en curso la termina el ciclo que la arranco,
+   * que no vuelve a pasar por aca.
+   */
+  readonly fijarPausaDeCola: (
+    robotId: string,
+    pausada: boolean,
+    ahoraMs: number,
+  ) => Promise<Result<boolean, ErrorDeRobot>>
+  readonly colaPausada: (robotId: string) => Promise<boolean>
 }
 
 export function crearRobotRepository(base: BaseDelAgente): RobotRepository {
@@ -148,6 +161,37 @@ export function crearRobotRepository(base: BaseDelAgente): RobotRepository {
         valor: { ...robot, ordenActivaId: ordenId, estado },
       })
     },
+
+    fijarPausaDeCola: (robotId, pausada, ahoraMs) => {
+      // Se exige que el robot exista: pausar la cola de un robot que no esta dado
+      // de alta dejaria una fila huerfana que despues pausa al robot que algun dia
+      // se registre con ese id.
+      if (buscar(robotId) === undefined) {
+        return Promise.resolve({
+          ok: false as const,
+          error: { codigo: 'ROBOT_INEXISTENTE' as const, robotId },
+        })
+      }
+
+      if (pausada) {
+        sql
+          .prepare(
+            `INSERT INTO colas_pausadas (robot_id, pausada_en) VALUES (?, ?)
+             ON CONFLICT(robot_id) DO UPDATE SET pausada_en = excluded.pausada_en`,
+          )
+          .run(robotId, ahoraMs)
+      } else {
+        sql.prepare('DELETE FROM colas_pausadas WHERE robot_id = ?').run(robotId)
+      }
+
+      return Promise.resolve({ ok: true as const, valor: pausada })
+    },
+
+    colaPausada: (robotId) =>
+      Promise.resolve(
+        sql.prepare('SELECT robot_id FROM colas_pausadas WHERE robot_id = ?').get(robotId) !==
+          undefined,
+      ),
   }
 }
 

@@ -429,7 +429,7 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 - [x] **T18** `agent`: dedupe idempotente por `(siteId, externalOrderId)` (RF14) y rehidratación (RF15).
 - [x] **T19** `agent`: API HTTP local con validación zod, bind a la interfaz de LAN y token de mantenimiento para el comando directo a PLC (RF21, RF22).
 - [x] **T20** `agent`: métricas y `/health` profundo, incluido el estado del enlace (RF24, RF25).
-- [ ] **T21** `agent`: logs estructurados, retención y purga de eventos.
+- [x] **T21** `agent`: logs estructurados, retención y purga de eventos.
 - [x] **T28** `agent`: `OrderSource` por long-poll — reclamo con lease, backoff con jitter, reconexión (RF28, RF33, RF37).
 - [x] **T29** `agent`: outbox de transiciones y drenado ordenado e idempotente al reconectar (RF34).
 - [x] **T30** `agent`: órdenes manuales sin enlace con push diferido al servidor (RF35).
@@ -442,17 +442,18 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 - [x] **T34** `server`: cola durable, entrega por long-poll con lease y re-entrega por vencimiento (RF27, RF28).
 - [x] **T35** `server`: reporte de transiciones idempotente por secuencia (RF29) y consulta de estado para picking (RF30).
 - [x] **T36** `server`: credenciales por sucursal, heartbeat, presencia y `/health` (RF31, RF32).
-- [ ] **T37** `server`: despliegue en el Linux — TLS, servicio, logs, retención y purga.
+- [x] **T37** `server`: despliegue en el Linux — TLS, servicio, logs, retención y purga.
 
 ### Integración, pruebas y cutover
 
-- [ ] **T22** Garantizar el contrato que consume el front nuevo: rutas, `{ ok, data }`, `side` y `robotId` en `GET /api/slots`, estado del enlace en `/health`. El rediseño va por su propia spec.
-- [ ] **T23** Script de migración de datos desde la base actual.
+- [x] **T22** Garantizar el contrato que consume el front nuevo: rutas, `{ ok, data }`, `side` y `robotId` en `GET /api/slots`, estado del enlace en `/health`. El rediseño va por su propia spec.
+- [x] **T23** Script de migración de datos desde la base actual.
 - [x] **T24** Tests unitarios (cobertura completa de `domain`).
-- [ ] **T25** Tests funcionales: e2e con PLC simulado y servidor de prueba, incluidos los caminos de error y recuperación, pérdida de enlace, re-entrega por lease vencido y drenado de outbox.
-- [ ] **T26** Plan de cutover en dos tiempos: (1) agente nuevo en paralelo contra el robot real, con cola local, validado una jornada completa; (2) recién ahí se enciende el enlace con el servidor. Nunca los dos el mismo día.
+- [x] **T25** Tests funcionales: e2e con PLC simulado y servidor de prueba, incluidos los caminos de error y recuperación, pérdida de enlace, re-entrega por lease vencido y drenado de outbox.
+- [x] **T26** Plan de cutover en dos tiempos: (1) agente nuevo en paralelo contra el robot real, con cola local, validado una jornada completa; (2) recién ahí se enciende el enlace con el servidor. Nunca los dos el mismo día. Está en `docs/cutover-fase-1.md`.
 - [ ] **T38** Repuntar la app de picking al servidor Linux y dar de baja VSCode Ports.
-- [ ] **T27** Descripción de PR.
+      Hecho lo de este repositorio: el contrato que la app tiene que implementar y el procedimiento de baja del túnel, en `docs/contrato-app-de-picking.md`. **Falta** lo que no se hace desde acá: que quien mantiene la app de picking lo implemente, y ejecutar el repunte y la baja del túnel, que son pasos operativos de la etapa 2 del cutover.
+- [x] **T27** Descripción de PR. Las nueve, en `docs/prs/`.
 
 ## Fuera de alcance (Fase 2)
 

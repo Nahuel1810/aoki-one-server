@@ -9,6 +9,7 @@
 // verde.
 
 export * from './result.js'
+export * from './logging.js'
 export * from './locationCode.js'
 export * from './plcProtocol.js'
 export * from './orderSteps.js'

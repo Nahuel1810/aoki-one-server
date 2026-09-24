@@ -11,6 +11,8 @@
 // tiren los repositorios reales, con el throw sincrono de better-sqlite3, que es
 // justo el que no se convierte en rechazo por si solo.
 
+import { crearLogger, type RegistroDeLog } from '@aoki-one/domain'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { DependenciasDelOrquestador, PuertoDeTransporte } from '../orchestrator/ports.js'
@@ -38,14 +40,23 @@ interface Levantado {
   readonly base: string
   /** Cierra la base del agente por debajo de la API, con la API ya escuchando. */
   readonly romperLaBase: () => void
+  /** Lo que el agente logueo. El logger se INYECTA: no se espia la consola. */
+  readonly logueado: RegistroDeLog[]
 }
 
 async function levantar(): Promise<Levantado> {
   const base = abrirBase(':memory:')
+  const logueado: RegistroDeLog[] = []
   const orquestador: DependenciasDelOrquestador = {
     repositorios: crearRepositorios(base),
     siteId: SITE_ID,
     agentId: 'AG-TEST',
+    logger: crearLogger({
+      componente: 'agente',
+      nivelMinimo: 'DEBUG',
+      ahoraMs: () => 0,
+      emitir: (registro) => logueado.push(registro),
+    }),
     generarId: () => 'id-1',
     transporte: TRANSPORTE_SIN_USO,
     reloj: crearRelojDelSistema(),
@@ -62,6 +73,7 @@ async function levantar(): Promise<Levantado> {
   const direccion = await api.escuchar(0, '127.0.0.1')
   return {
     api,
+    logueado,
     base: `http://127.0.0.1:${String(direccion.puerto)}`,
     romperLaBase: () => {
       base.cerrar()
@@ -87,8 +99,7 @@ describe('resiliencia de la API del agente', () => {
   it('traduce el fallo del repositorio a 500 y el agente sigue en pie', async () => {
     // El handler deja rastro en el log del agente: es el unico lugar donde queda,
     // porque el detalle no sale en la respuesta.
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const { api, base, romperLaBase } = await levantar()
+    const { api, base, romperLaBase, logueado } = await levantar()
 
     try {
       expect((await pedirConCorte(`${base}/health`)).status).toBe(200)
@@ -101,7 +112,9 @@ describe('resiliencia de la API del agente', () => {
       const salud = await pedirConCorte(`${base}/health`)
       expect(salud.status).toBe(500)
       expect(JSON.parse(salud.cuerpo)).toEqual({ ok: false, error: 'error interno del agente' })
-      expect(log).toHaveBeenCalled()
+      expect(logueado.filter((registro) => registro.evento === 'API_UNHANDLED_FAILURE')).not.toEqual(
+        [],
+      )
 
       // Y la otra mitad: el proceso sigue vivo y la API sigue atendiendo, aunque
       // lo unico que pueda contestar sea el fallo.
@@ -113,7 +126,6 @@ describe('resiliencia de la API del agente', () => {
   })
 
   it('no filtra el detalle del fallo a la tablet', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { api, base, romperLaBase } = await levantar()
 
     try {

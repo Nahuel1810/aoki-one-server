@@ -9,6 +9,8 @@
 // vuelve enseguida. Sin eso el test tardaria la suma del backoff, que es
 // exactamente lo que el backoff existe para hacer larga.
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { createServer } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -140,6 +142,7 @@ async function correrElBucleContraLaNada(azar: Azar): Promise<{
     repositorios: crearRepositorios(base),
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => 'no-se-usa',
     transporte: TRANSPORTE_SIN_USO,
     reloj: anotador.reloj,

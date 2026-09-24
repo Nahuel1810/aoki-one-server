@@ -37,6 +37,18 @@ const ESQUEMA = `
   CREATE UNIQUE INDEX IF NOT EXISTS robots_site_estanteria
     ON robots (site_id, estanteria_code);
 
+  -- RF21 — La pausa de cola, una fila por robot pausado. Sin fila = en marcha.
+  --
+  -- Tabla propia y no una columna de robots porque el esquema se aplica con
+  -- CREATE TABLE IF NOT EXISTS: una columna nueva no llega nunca a una base que
+  -- ya existe, y la de la sucursal ya existe. Ademas no es una propiedad del
+  -- robot sino de su cola: el robot sigue estando perfectamente habilitado
+  -- mientras la cola esta detenida.
+  CREATE TABLE IF NOT EXISTS colas_pausadas (
+    robot_id    TEXT PRIMARY KEY,
+    pausada_en  INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS devices (
     robot_id            TEXT NOT NULL,
     tipo                TEXT NOT NULL,

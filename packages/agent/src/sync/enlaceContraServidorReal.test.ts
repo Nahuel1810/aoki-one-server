@@ -22,7 +22,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { TipoDispositivo } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type TipoDispositivo } from '@aoki-one/domain'
 
 import { crearServidor, type Servidor } from '../../../server/src/composition.js'
 import {
@@ -216,6 +216,8 @@ async function montar(opciones?: OpcionesDeMontaje): Promise<void> {
   servidor = crearServidor({
     rutaDeBase: ':memory:',
     entorno: ENTORNO_DEL_SERVIDOR,
+    // El default escribe a stdout: en la suite eso es ruido, no informacion.
+    logger: LOGGER_SILENCIOSO,
     // Puerto 0: lo asigna el sistema. Uno fijo es EADDRINUSE en CI.
     httpPuerto: 0,
     httpBind: '127.0.0.1',
@@ -278,6 +280,7 @@ async function montar(opciones?: OpcionesDeMontaje): Promise<void> {
     repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => randomUUID(),
     transporte: crearTransporteQueCuenta(),
     reloj,

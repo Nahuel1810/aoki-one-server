@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import type { Result } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type Result } from '@aoki-one/domain'
 
 import type {
   ErrorDeOrden,
@@ -117,6 +117,8 @@ function crearRepositoriosDoble(): RepositoriosDoble {
       Promise.resolve(estanteriaCode === ROBOT.estanteriaCode ? { ...ROBOT, siteId } : undefined),
     listar: () => Promise.resolve([ROBOT]),
     fijarOrdenActiva: sinDoble('robots.fijarOrdenActiva'),
+    fijarPausaDeCola: sinDoble('robots.fijarPausaDeCola'),
+    colaPausada: sinDoble('robots.colaPausada'),
   }
 
   const registroDeEventos: EventRepository = {
@@ -198,6 +200,7 @@ function dependencias(
     repositorios,
     siteId,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId,
   }
 }

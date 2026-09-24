@@ -16,7 +16,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { Result } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type Result } from '@aoki-one/domain'
 
 import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador, PuertoDeTransporte } from '../orchestrator/ports.js'
@@ -191,6 +191,7 @@ beforeEach(async () => {
     repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => {
       contador += 1
       return `id-${String(contador)}`

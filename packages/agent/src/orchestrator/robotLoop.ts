@@ -17,9 +17,10 @@ import {
   transicionarOrden,
   transicionarSlot,
 } from '@aoki-one/domain'
-import type { EventoSlot, PasoDeOrden } from '@aoki-one/domain'
+import type { EventoSlot, Logger, PasoDeOrden } from '@aoki-one/domain'
 import type { Orden } from '../persistence/index.js'
 import type { FalloDeEjecucion } from '../transport/errorClassification.js'
+import { loggerDeOrden } from '../sync/correlacion.js'
 import { aplicarTransicionDeOrden } from '../sync/transitions.js'
 import { resolverSlotDeOrden } from './slotWait.js'
 import { ejecutarPasoConReintentos } from './stepExecutor.js'
@@ -32,6 +33,8 @@ export type ResultadoDeCicloDeRobot =
   | { readonly tipo: 'SIN_TRABAJO' }
   /** Ya hay una orden en curso: no se arranca la siguiente. */
   | { readonly tipo: 'ROBOT_OCUPADO'; readonly ordenActivaId: string }
+  /** Cola pausada desde la tablet (RF21): no se toman ordenes nuevas de este robot. */
+  | { readonly tipo: 'COLA_PAUSADA'; readonly robotId: string }
   /** Sin slot disponible de ese lado: la orden espera sin perder su lugar y el robot se libera. */
   | { readonly tipo: 'ORDEN_EN_ESPERA_DE_SLOT'; readonly ordenId: string; readonly lado: Lado }
   | {
@@ -59,6 +62,15 @@ export async function ejecutarCicloDeRobot(
     return { tipo: 'ROBOT_OCUPADO', ordenActivaId: robot.ordenActivaId }
   }
 
+  // RF21: con la cola pausada el robot deja de TOMAR ordenes nuevas, y nada mas.
+  // La que ya estaba en curso no pasa por aca —la ejecuta entera el ciclo que la
+  // arranco, adentro de `ejecutarManiobra`— asi que pausar no la puede abortar ni
+  // dejar el cajon a mitad de camino. Va despues del guard de orden activa para
+  // que una pausa no disimule un robot ocupado.
+  if (await repositorios.robots.colaPausada(robotId)) {
+    return { tipo: 'COLA_PAUSADA', robotId }
+  }
+
   const pendientes = await repositorios.ordenes.listar({
     siteId,
     robotId,
@@ -76,12 +88,18 @@ export async function ejecutarCicloDeRobot(
     return { tipo: 'SIN_TRABAJO' }
   }
 
+  // La correlacion se fija UNA vez, al tomar la orden, y de ahi en mas viaja
+  // sola: es lo que permite seguir este pedido hasta el comando que sale al PLC
+  // y cruzarlo con el log del servidor por `ordenId` o por `externalOrderId`.
+  const log = await loggerDeOrden(dependencias, orden)
+
   // RF07: un PICK sobre un cajon que YA esta apoyado no genera maniobra.
   if (orden.tipo === 'PICK') {
     const yaApoyado = await repositorios.slots.buscarPorCajonDeOrigen(robotId, orden.locationCode)
     if (yaApoyado !== undefined && yaApoyado.estado.estado === 'OCUPADO') {
       const resolucion = resolverPick(yaApoyado.estado.contenido)
       if (resolucion.ok && resolucion.valor.tipo === 'TERMINAR_SIN_MANIOBRA') {
+        log.info('ORDER_DONE_WITHOUT_MOVE', { slotLocationCode: yaApoyado.locationCode })
         await repositorios.slots.guardarEstado(robotId, yaApoyado.locationCode, {
           estado: 'OCUPADO',
           contenido: {
@@ -119,6 +137,7 @@ export async function ejecutarCicloDeRobot(
 
   const slot = await resolverSlotDeOrden(dependencias, orden)
   if (!slot.ok) {
+    log.error('ORDER_FAILED', { etapa: 'RESOLUCION_DE_SLOT', motivo: slot.error })
     await marcarEnError(dependencias, orden, JSON.stringify(slot.error))
     return {
       tipo: 'ORDEN_TERMINADA',
@@ -132,10 +151,15 @@ export async function ejecutarCicloDeRobot(
     // No se reencola: conserva su creadaEn y con eso su lugar. El robot queda
     // libre para atender otra orden, posiblemente del otro lado.
     await repositorios.ordenes.actualizar(orden.id, { waitingForSlot: true })
+    log.info('ORDER_WAITING_FOR_SLOT', { lado: slot.valor.lado })
     return { tipo: 'ORDEN_EN_ESPERA_DE_SLOT', ordenId: orden.id, lado: slot.valor.lado }
   }
 
   const slotLocationCode = slot.valor.slotLocationCode
+  // El destino de un PUT lo resuelve `resolverSlotDeOrden` contra el cajon en
+  // libros (RF11), asi que la orden que se ejecuta es la de la resolucion, no la
+  // que se leyo de la cola.
+  const targetLocation = slot.valor.targetLocation
 
   // Toma del robot y del slot, y arranque de la orden.
   await repositorios.robots.fijarOrdenActiva(robotId, orden.id)
@@ -156,8 +180,13 @@ export async function ejecutarCicloDeRobot(
     robotId,
     slotLocationCode,
   })
+  log.info('ORDER_STARTED', { robotId, slotLocationCode, tipo: orden.tipo })
 
-  const ejecucion = await ejecutarManiobra(dependencias, { ...orden, slotLocationCode })
+  const ejecucion = await ejecutarManiobra(
+    dependencias,
+    { ...orden, slotLocationCode, targetLocation },
+    log,
+  )
 
   await registrarEvento(
     dependencias,
@@ -166,6 +195,12 @@ export async function ejecutarCicloDeRobot(
     ejecucion.estadoFinal === 'DONE' ? 'INFO' : 'ERROR',
     { robotId },
   )
+
+  if (ejecucion.estadoFinal === 'DONE') {
+    log.info('ORDER_DONE', { robotId })
+  } else {
+    log.error('ORDER_FAILED', { robotId, etapa: 'MANIOBRA' })
+  }
 
   await repositorios.robots.fijarOrdenActiva(robotId, null)
 
@@ -186,6 +221,7 @@ export async function ejecutarCicloDeRobot(
 async function ejecutarManiobra(
   dependencias: DependenciasDelOrquestador,
   orden: Orden,
+  log: Logger,
 ): Promise<{ readonly estadoFinal: EstadoOrden }> {
   const { repositorios, reloj } = dependencias
 
@@ -216,6 +252,15 @@ async function ejecutarManiobra(
       finalizadoEn: null,
     })
 
+    // La punta del hilo: este es el comando concreto que sale al PLC, y lleva
+    // pegada la misma correlacion con la que el pedido entro por el servidor.
+    log.debug('STEP_SENT', {
+      seq: paso.seq,
+      tipo: paso.tipo,
+      dispositivo: paso.dispositivo,
+      comando: typeof paso.comando === 'number' ? paso.comando : paso.comando.codigo,
+    })
+
     const resultado = await ejecutarPasoConReintentos(dependencias, {
       ordenId: orden.id,
       robotId: orden.robotId,
@@ -236,6 +281,14 @@ async function ejecutarManiobra(
         tipo: paso.tipo,
         mensaje: mensajeDeFallo(fallo),
       })
+      log.error('STEP_FAILED', {
+        seq: paso.seq,
+        tipo: paso.tipo,
+        dispositivo: paso.dispositivo,
+        intentos: resultado.error.intentos,
+        motivo: resultado.error.codigo,
+        mensaje: mensajeDeFallo(fallo),
+      })
       await marcarEnError(dependencias, orden, mensajeDeFallo(fallo))
       return { estadoFinal: 'ERROR' }
     }
@@ -246,6 +299,7 @@ async function ejecutarManiobra(
       finalizadoEn: reloj.ahoraMs(),
     })
     await repositorios.ordenes.actualizar(orden.id, { currentStepIndex: paso.seq })
+    log.debug('STEP_DONE', { seq: paso.seq, intentos: resultado.valor.intentos })
   }
 
   await registrarMetrica(dependencias, orden, 'DONE')

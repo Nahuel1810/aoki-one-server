@@ -2,28 +2,64 @@
 //
 // El agente corre en la notebook de la LAN de la sucursal: es dueño del lazo de
 // control Modbus contra los PLCs, expone la API HTTP solo hacia la LAN y habla
-// con el servidor Linux por long-poll saliente.
+// con el servidor Linux por long-poll saliente. Nunca recibe conexiones de
+// afuera, asi que no publica ningun puerto a internet (ver deploy/README-agente.md).
 //
-// En T01 esto es solo andamiaje. El cableado real (orchestrator, transport,
-// sync, persistence y api) entra en las tasks que lo necesiten.
+// Este archivo es la capa mas fina posible: lee el entorno del proceso, delega
+// en `arrancar` y traduce el resultado a senales y exit code. Todo lo que se
+// puede afirmar en un test vive en `arranque.ts`.
 
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { PACKAGE_NAME } from '@aoki-one/domain'
+import { arrancar } from './arranque.js'
+import { leerConfiguracion } from './configuracion.js'
+import { crearLoggerDelAgente } from './registro.js'
 
 /** Nombre del paquete. Sirve para trazas y diagnosticos. */
 export const PACKAGE_NAME_AGENT = '@aoki-one/agent'
 
 /**
- * Arranque del agente.
+ * Arranque del proceso.
  *
- * Por ahora solo deja constancia de que el proceso levanto y de que el enlace
- * de compilacion contra el dominio resuelve de punta a punta.
+ * Con la configuracion rota NO deja el agente a medias: loguea todo lo que hay
+ * que corregir y termina con exit code 1. Arrancar igual seria peor que no
+ * arrancar, porque la tablet mostraria una sucursal viva que no mueve el robot.
  */
-export function main(): void {
-  // Log crudo a proposito: el logger estructurado del agente llega en T21.
-  console.log(`[${PACKAGE_NAME_AGENT}] agente iniciado (dominio: ${PACKAGE_NAME})`)
+export async function main(): Promise<void> {
+  // El nivel sale de la misma lectura que valida todo lo demas. Si la
+  // configuracion esta rota se cae al default y el logger igual existe: los
+  // errores de configuracion son justo los que no se pueden perder.
+  const configuracion = leerConfiguracion(process.env)
+  const logger = crearLoggerDelAgente(configuracion.ok ? configuracion.valor.nivelDeLog : 'INFO')
+
+  const proceso = await arrancar({ entorno: process.env, logger })
+
+  if (!proceso.ok) {
+    process.exitCode = 1
+    return
+  }
+
+  // SIGTERM es la senal con la que un servicio de Windows o `nssm` paran el
+  // proceso, y SIGINT la del Ctrl+C de quien lo prueba a mano. Las dos cierran
+  // igual: se corta el enlace y el bucle del robot, y recien entonces se cierra
+  // la base, para no dejar una maniobra escrita a la mitad.
+  let deteniendo = false
+  const detener = (senal: string): void => {
+    if (deteniendo) {
+      return
+    }
+    deteniendo = true
+    logger.info('SIGNAL_RECEIVED', { senal })
+    void proceso.valor.detener()
+  }
+
+  process.on('SIGTERM', () => {
+    detener('SIGTERM')
+  })
+  process.on('SIGINT', () => {
+    detener('SIGINT')
+  })
 }
 
 /**
@@ -40,5 +76,5 @@ function esEntryPoint(): boolean {
 }
 
 if (esEntryPoint()) {
-  main()
+  void main()
 }

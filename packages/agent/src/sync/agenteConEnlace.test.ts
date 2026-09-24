@@ -15,6 +15,8 @@ import { setTimeout as dormir } from 'node:timers/promises'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { crearServidor, type Servidor } from '../../../server/src/composition.js'
 import {
   generarClaveDeCifrado,
@@ -238,6 +240,8 @@ describe('el agente con el enlace vivo (RF28, RF31, RF34, RF36)', () => {
         entorno: ENTORNO_DEL_SERVIDOR,
         httpPuerto: 0,
         httpBind: '127.0.0.1',
+        // El default escribe a stdout: en la suite eso es ruido, no informacion.
+        logger: LOGGER_SILENCIOSO,
         // Long-poll corto: el bucle del enlace tiene que dar varias vueltas dentro
         // del test, y con los 25 s de produccion daria una sola.
         configuracion: { esperaDeLongPollMs: 100, sondeoDeLongPollMs: 10 },

@@ -23,6 +23,7 @@ export * from './eventRepository.js'
 export * from './metricsRepository.js'
 export * from './orderRepository.js'
 export * from './orderStepRepository.js'
+export * from './retencion.js'
 export * from './robotRepository.js'
 export * from './slotRepository.js'
 

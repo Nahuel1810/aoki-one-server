@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { firmar } from '../api/hmac.js'
 import { HEADER_FIRMA, HEADER_KEY_ID, HEADER_TIMESTAMP } from '../api/httpServer.js'
 import { crearServidor, type Servidor } from '../composition.js'
@@ -49,6 +51,8 @@ async function levantar(): Promise<{ servidor: Servidor; base: string }> {
   const servidor = crearServidor({
     rutaDeBase: ':memory:',
     entorno: ENTORNO,
+    // El default escribe a stdout: en la suite eso es ruido, no informacion.
+    logger: LOGGER_SILENCIOSO,
     // Puerto 0: lo asigna el sistema. Uno fijo es EADDRINUSE en CI.
     httpPuerto: 0,
     httpBind: '127.0.0.1',

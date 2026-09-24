@@ -11,6 +11,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { LOGGER_SILENCIOSO } from '@aoki-one/domain'
+
 import { firmar } from '../api/hmac.js'
 import { HEADER_FIRMA, HEADER_KEY_ID, HEADER_TIMESTAMP } from '../api/httpServer.js'
 import { crearServidor, type Servidor } from '../composition.js'
@@ -37,6 +39,9 @@ async function levantar(): Promise<{ servidor: Servidor; base: string }> {
     httpPuerto: 0,
     httpBind: '127.0.0.1',
     entorno: ENTORNO,
+    // Este test rechaza a proposito, y cada rechazo ahora loguea. Silenciado:
+    // lo que se afirma es el status, no la linea.
+    logger: LOGGER_SILENCIOSO,
     configuracion: { esperaDeLongPollMs: 50, sondeoDeLongPollMs: 10 },
   })
   await servidor.iniciar()

@@ -14,6 +14,13 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  crearLogger,
+  LOGGER_SILENCIOSO,
+  type Logger,
+  type RegistroDeLog,
+} from '@aoki-one/domain'
+
 import type {
   CredencialDeAgente,
   CredentialsRepository,
@@ -95,13 +102,17 @@ interface Levantado {
   readonly base: string
 }
 
-async function levantar(cola: ColaDelServidor): Promise<Levantado> {
+async function levantar(
+  cola: ColaDelServidor,
+  logger: Logger = LOGGER_SILENCIOSO,
+): Promise<Levantado> {
   const servidor = crearServidorHttp({
     cola,
     credenciales: credencialesValidas(),
     ahora: () => Date.now(),
     dormir: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     configuracion: CONFIGURACION,
+    logger,
   })
   // Puerto 0: lo asigna el sistema. Uno fijo es EADDRINUSE en CI.
   const direccion = await servidor.escuchar(0, '127.0.0.1')
@@ -139,8 +150,10 @@ afterEach(() => {
 describe('resiliencia del servidor', () => {
   it('traduce el fallo del repositorio a 500 y sigue atendiendo', async () => {
     // El middleware de error deja rastro en el log del servidor: es el unico
-    // lugar donde queda, porque el detalle no sale en la respuesta.
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    // lugar donde queda, porque el detalle no sale en la respuesta. Y va por el
+    // logger estructurado, no por `console.error`: una linea con otra forma no
+    // la encuentra el que la busca.
+    const emitidos: RegistroDeLog[] = []
 
     const cola = colaQueNoSeUsa()
     let reclamos = 0
@@ -153,7 +166,15 @@ describe('resiliencia del servidor', () => {
       pendientes: () => Promise.resolve(0),
     }
 
-    const { servidor, base } = await levantar(conRepositorioRoto)
+    const { servidor, base } = await levantar(
+      conRepositorioRoto,
+      crearLogger({
+        componente: 'servidor',
+        nivelMinimo: 'DEBUG',
+        ahoraMs: () => 0,
+        emitir: (registro) => emitidos.push(registro),
+      }),
+    )
 
     try {
       const respuesta = await comoAgente(base, '/api/v1/agent/work', {
@@ -168,7 +189,10 @@ describe('resiliencia del servidor', () => {
       expect(respuesta.status).toBe(500)
       expect(await respuesta.json()).toEqual({ ok: false, error: 'error interno del servidor' })
       expect(reclamos).toBe(1)
-      expect(log).toHaveBeenCalled()
+      const fallo = emitidos.find((registro) => registro.evento === 'REQUEST_FAILED')
+      expect(fallo?.nivel).toBe('ERROR')
+      expect(fallo?.datos['ruta']).toBe('/api/v1/agent/work')
+      expect(String(fallo?.datos['detalle'])).toContain('SQLITE_BUSY')
 
       // Y la otra mitad: el proceso sigue en pie y el servidor sigue atendiendo.
       const salud = await fetch(`${base}/health`)
@@ -179,8 +203,6 @@ describe('resiliencia del servidor', () => {
   })
 
   it('no filtra el detalle del fallo al cliente', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-
     const conSecretoEnElError: ColaDelServidor = {
       ...colaQueNoSeUsa(),
       reclamar: () =>

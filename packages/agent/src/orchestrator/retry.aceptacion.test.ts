@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import type { EstadoSlot, Result } from '@aoki-one/domain'
+import { LOGGER_SILENCIOSO, type EstadoSlot, type Result } from '@aoki-one/domain'
 
 import type {
   DeviceRepository,
@@ -160,6 +160,8 @@ function crearDoble(): Doble {
     buscarPorEstanteria: () => Promise.resolve(ROBOT),
     listar: () => Promise.resolve([ROBOT]),
     fijarOrdenActiva: sinDoble('robots.fijarOrdenActiva'),
+    fijarPausaDeCola: sinDoble('robots.fijarPausaDeCola'),
+    colaPausada: sinDoble('robots.colaPausada'),
   }
 
   const repositorioDeEventos: EventRepository = {
@@ -236,6 +238,7 @@ function dependencias(doble: Doble): DependenciasDelOrquestador {
     repositorios: doble.repositorios,
     siteId: SITE_ID,
     agentId: AGENT_ID,
+    logger: LOGGER_SILENCIOSO,
     generarId: () => 'ev-1',
   }
 }

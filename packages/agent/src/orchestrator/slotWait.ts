@@ -18,6 +18,7 @@ import { resolverDestinoDePut } from './putTargetResolution.js'
 import type {
   ErrorLocationCode,
   ErrorSeleccionSlot,
+  EstadoSlot,
   Lado,
   NombreEstadoSlot,
   Result,
@@ -45,7 +46,20 @@ export type MotivoDeEspera =
     }
 
 export type ResolucionDeSlot =
-  | { readonly tipo: 'SLOT_ASIGNADO'; readonly slotLocationCode: string }
+  | {
+      readonly tipo: 'SLOT_ASIGNADO'
+      readonly slotLocationCode: string
+      /**
+       * A donde va el cajon en un PUT, ya resuelto por RF11.
+       *
+       * Viaja en la resolucion ademas de persistirse porque el ciclo del robot
+       * arma los pasos con la orden que ya tenia en la mano: leer de ahi el
+       * `targetLocation` daria el del pedido —o `null`— en vez del que acaba de
+       * resolverse contra el cajon en libros. En un PICK es el de la orden, que
+       * no se usa para nada.
+       */
+      readonly targetLocation: string | null
+    }
   /** La orden espera sin perder su lugar y el robot queda libre. */
   | { readonly tipo: 'EN_ESPERA'; readonly lado: Lado; readonly motivo: MotivoDeEspera }
 
@@ -78,6 +92,35 @@ export async function resolverSlotDeOrden(
   }
 
   const zona = await repositorios.slots.listarPorRobot(orden.robotId)
+
+  // El slot que la orden YA tiene en la mano se reusa; no se vuelve a elegir.
+  //
+  // RF13 deja el slot como estaba cuando un paso falla, "a la espera del retry",
+  // y RF15 hace lo mismo con la orden que un reinicio dejo a mitad de maniobra.
+  // En los dos casos la orden vuelve a PENDING con su slot todavia tomado, y
+  // resolver de nuevo seria abandonarlo: el PICK elegiria otro slot —el suyo ya
+  // no esta LIBRE, asi que el ranking lo excluye— y el anterior quedaria en
+  // BUSCANDO para siempre, porque el unico evento que sale de ahi es OCUPAR y lo
+  // emite la maniobra que acaba de fallar. Cada retry se comeria un slot de la
+  // zona de pickeo, en silencio. El PUT es peor todavia: su slot esta en
+  // DEVOLVIENDO, `resolverDestinoDePut` contesta ESPERAR_SLOT y la orden queda
+  // esperando el slot que ella misma retiene, sin avanzar ni fallar nunca.
+  const retenido = zona.find(
+    (slot) =>
+      slot.locationCode === orden.slotLocationCode && ordenQueRetiene(slot.estado) === orden.id,
+  )
+  if (retenido !== undefined) {
+    // El destino ya se resolvio y se persistio en la primera pasada: volver a
+    // resolverlo contra un slot que ahora esta DEVOLVIENDO daria otra cosa.
+    return {
+      ok: true,
+      valor: {
+        tipo: 'SLOT_ASIGNADO',
+        slotLocationCode: retenido.locationCode,
+        targetLocation: orden.targetLocation,
+      },
+    }
+  }
 
   if (orden.tipo === 'PUT') {
     // Para un PUT el locationCode ES el slot del que sale el cajon.
@@ -121,11 +164,21 @@ export async function resolverSlotDeOrden(
       }
     }
 
+    // El destino resuelto SE PERSISTE. Sin esto el `targetLocation` de la orden
+    // se queda como vino del pedido, y en la devolucion estandar —slot con cajon
+    // en libros, donde RF11 dice que el destino sale del cajon y el del pedido se
+    // ignora— eso es `null`: la orden muere armando los pasos, con "destino
+    // invalido", y el cajon no vuelve nunca a su ubicacion de guardado.
+    const targetLocation = destino.valor.destino.locationCode
     await repositorios.ordenes.actualizar(orden.id, {
       slotLocationCode: slot.locationCode,
+      targetLocation,
       waitingForSlot: false,
     })
-    return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: slot.locationCode } }
+    return {
+      ok: true,
+      valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: slot.locationCode, targetLocation },
+    }
   }
 
   // PICK: el slot libre mas cercano del MISMO LADO. El ranking es dominio puro.
@@ -169,5 +222,34 @@ export async function resolverSlotDeOrden(
     waitingForSlot: false,
   })
 
-  return { ok: true, valor: { tipo: 'SLOT_ASIGNADO', slotLocationCode: ganador.locationCode } }
+  return {
+    ok: true,
+    valor: {
+      tipo: 'SLOT_ASIGNADO',
+      slotLocationCode: ganador.locationCode,
+      targetLocation: orden.targetLocation,
+    },
+  }
+}
+
+/**
+ * La orden que tiene tomado el slot, o `null` si no lo retiene ninguna.
+ *
+ * `OCUPADO` no retiene: el cajon esta apoyado y la orden que lo trajo ya
+ * termino. `ERROR` tampoco, porque un slot inutilizable no espera a nadie.
+ *
+ * Se exporta porque la cancelacion (RF21) necesita la MISMA definicion de
+ * "retiene": dos criterios distintos para lo mismo es como se pierde un slot.
+ */
+export function ordenQueRetiene(estado: EstadoSlot): string | null {
+  switch (estado.estado) {
+    case 'RESERVADO':
+    case 'BUSCANDO':
+    case 'DEVOLVIENDO':
+      return estado.ordenId
+    case 'LIBRE':
+    case 'OCUPADO':
+    case 'ERROR':
+      return null
+  }
 }

@@ -19,10 +19,9 @@ export type TipoOrden = 'PICK' | 'PUT'
 /**
  * Estado de una orden, con los valores que ya se persisten y salen por la API.
  *
- * `CANCELED` va con una sola L porque asi se escribe hoy en el contrato. Es el
- * unico estado que ningun evento de esta fase produce: la cancelacion no tiene
- * test portado (RF21 figura en "RF sin cobertura"), pero el valor existe en las
- * filas persistidas y el repositorio tiene que poder nombrarlo.
+ * `CANCELED` va con una sola L porque asi se escribe hoy en el contrato. Lo
+ * produce `CANCELAR` (RF21): el boton de la tablet con el que el operario saca
+ * de la cola un pedido que no va mas.
  */
 export type EstadoOrden = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'ERROR' | 'CANCELED'
 
@@ -52,6 +51,21 @@ export type EventoOrden =
    * vuelo vuelve a la cola respetando su antiguedad.
    */
   | { readonly tipo: 'REHIDRATAR' }
+  /**
+   * PENDING -> CANCELED. El operario saca de la cola un pedido que no va mas
+   * (RF21).
+   *
+   * SOLO desde PENDING, y es deliberado. Cancelar es sacar de la cola, no
+   * abortar una maniobra: marcar cancelada una orden IN_PROGRESS no frena al
+   * carro —el ciclo que la ejecuta esta adentro del handshake con el PLC y no
+   * mira el estado— asi que dejaria el cajon a mitad de camino y los libros
+   * diciendo que no hay nada en curso, que es la combinacion con la que el
+   * proximo pedido choca contra un cajon que no esta donde el sistema cree.
+   *
+   * Las terminales tampoco: DONE y CANCELED ya salieron de la cola, y ERROR sale
+   * por REINTENTAR, que es el camino que RF13 le da al operario.
+   */
+  | { readonly tipo: 'CANCELAR' }
 
 export type NombreEventoOrden = EventoOrden['tipo']
 
@@ -98,5 +112,10 @@ export function transicionarOrden(
     case 'REHIDRATAR':
       // Tras un reinicio las IN_PROGRESS vuelven a PENDING y se reencolan (RF15).
       return estado === 'IN_PROGRESS' ? { ok: true, valor: 'PENDING' } : rechazo
+
+    case 'CANCELAR':
+      // Sacar de la cola algo que todavia no se toco. Una orden que el robot ya
+      // esta ejecutando no se puede cancelar sin dejar el cajon a mitad de camino.
+      return estado === 'PENDING' ? { ok: true, valor: 'CANCELED' } : rechazo
   }
 }

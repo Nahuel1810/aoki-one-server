@@ -21,7 +21,7 @@
 // El enlace se puede APAGAR entero, y apagado es el default (composicion). En el
 // cutover el agente corre primero sin servidor, solo con su cola local.
 
-import type { EstadoOrden } from '@aoki-one/domain'
+import type { CorrelacionDeOrden, EstadoOrden, Logger } from '@aoki-one/domain'
 
 import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador } from '../orchestrator/ports.js'
@@ -140,6 +140,37 @@ const HTTP_QUE_NO_MATA_LA_FILA: readonly number[] = [404, 408, 429]
 export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
   const { origen, cliente, outbox, orquestador, azar, opciones, despertar } = dependencias
   const { reloj, repositorios, siteId } = orquestador
+  const log = orquestador.logger
+
+  /**
+   * La correlacion de una transicion que esta por salir.
+   *
+   * Es EL punto del sistema donde se ven los dos ids a la vez: el local, con el
+   * que se busca en `events` y `order_steps` de la sucursal, y el remoto, que es
+   * el que va a aparecer del otro lado del enlace. Loguearlos juntos aca es lo
+   * que hace que las dos mitades se puedan empalmar despues.
+   */
+  async function correlacionDeTransicion(
+    ordenId: string,
+    ordenIdRemoto: string | null,
+  ): Promise<CorrelacionDeOrden> {
+    const orden = await repositorios.ordenes.buscarPorId(ordenId)
+    return {
+      siteId,
+      ordenId: ordenIdRemoto,
+      ordenIdLocal: ordenId,
+      externalOrderId: orden?.externalOrderId ?? null,
+    }
+  }
+
+  function logDeEntrante(entrante: OrdenEntrante, ordenIdLocal: string | null): Logger {
+    return log.paraOrden({
+      siteId,
+      ordenId: entrante.ordenIdRemoto,
+      ordenIdLocal,
+      externalOrderId: entrante.externalOrderId,
+    })
+  }
 
   let ultimoContactoMs: number | null = null
   let ultimoLatidoMs: number | null = null
@@ -226,6 +257,13 @@ export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
     if (intentos >= opciones.maxIntentosDeTransicion && esRechazoDeLaFila(fallo)) {
       await outbox.darPorMuerta(transicion.id, fallo.tipo, reloj.ahoraMs())
       await avisarDeTransicionMuerta(transicion, fallo, intentos)
+      log
+        .paraOrden(await correlacionDeTransicion(transicion.ordenId, null))
+        .error('OUTBOX_DEAD_LETTER', { seq: transicion.seq, motivo: fallo.tipo, intentos })
+    } else {
+      log
+        .paraOrden(await correlacionDeTransicion(transicion.ordenId, null))
+        .warn('TRANSITION_REPORT_FAILED', { seq: transicion.seq, motivo: fallo.tipo, intentos })
     }
     return { ok: false, fallo }
   }
@@ -295,6 +333,13 @@ export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
       // un evento repetido es preferible a una transicion que desaparece sin
       // rastro.
       await avisarDeTransicionSinContraparte(transicion, remota.motivo)
+      log
+        .paraOrden(await correlacionDeTransicion(transicion.ordenId, null))
+        .error('OUTBOX_DROPPED_NO_COUNTERPART', {
+          seq: transicion.seq,
+          estado: transicion.estado,
+          motivo: remota.motivo,
+        })
       await outbox.confirmar(transicion.id)
       return { ok: true }
     }
@@ -313,6 +358,15 @@ export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
     }
 
     registrarContacto()
+    // Esta linea es la mitad agente del cruce: lleva el id remoto con el que el
+    // servidor va a registrar la MISMA transicion en su propio log.
+    log
+      .paraOrden(await correlacionDeTransicion(transicion.ordenId, remota.ordenIdRemoto))
+      .info('TRANSITION_REPORTED', {
+        seq: transicion.seq,
+        estado: transicion.estado,
+        resultado: reporte.valor.tipo,
+      })
     // APLICADA, DESCARTADA y ORDEN_INEXISTENTE terminan igual: la transicion sale
     // de la cola. Una DESCARTADA ya esta aplicada del otro lado; tratarla como
     // error dejaria al outbox reintentandola para siempre.
@@ -417,6 +471,10 @@ export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
         // operario de la tablet no tiene otra forma de enterarse.
         await avisarDeOrdenRechazada(entrante, admision.error.codigo)
       }
+      logDeEntrante(entrante, null).error('ORDER_REJECTED_BY_SITE', {
+        motivo: admision.error.codigo,
+        locationCode: entrante.locationCode,
+      })
       return 'RECHAZADA'
     }
 
@@ -425,6 +483,14 @@ export function crearEnlace(dependencias: DependenciasDelEnlace): Enlace {
     // las transiciones de esa orden no sabrian a que id remoto ir.
     const orden = admision.valor.orden
     await outbox.vincular(orden.id, entrante.ordenIdRemoto)
+    // Primera linea de la vida de esta orden EN LA SUCURSAL, y la unica donde el
+    // id remoto y el local se conocen por primera vez juntos. Sin ella el resto
+    // del rastro local no se puede atar a nada del servidor.
+    logDeEntrante(entrante, orden.id).info('ORDER_MIRRORED', {
+      admision: admision.valor.tipo,
+      tipo: entrante.tipo,
+      locationCode: entrante.locationCode,
+    })
     if (admision.valor.tipo === 'CREADA') {
       return 'CREADA'
     }
