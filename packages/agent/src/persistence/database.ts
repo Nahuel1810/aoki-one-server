@@ -129,6 +129,25 @@ const ESQUEMA = `
   CREATE INDEX IF NOT EXISTS order_metrics_finalizada
     ON order_metrics (finalizada_en);
 
+  -- RF22 — El padron de clientes de la API local.
+  --
+  -- La API no tiene login: el control es de red. Esta tabla responde la pregunta
+  -- que eso deja abierta —QUIEN esta llamando— y permite cortarle el acceso a uno
+  -- puntual. El default es PERMITIDO a proposito: un padron que exige habilitar
+  -- antes de dejar pasar deja el robot parado la primera vez que la tablet cambia
+  -- de IP. Se registra todo, y quien opera banea lo que no reconoce.
+  CREATE TABLE IF NOT EXISTS clientes_api (
+    ip            TEXT PRIMARY KEY,
+    primera_vez   INTEGER NOT NULL,
+    ultimo_visto  INTEGER NOT NULL,
+    llamadas      INTEGER NOT NULL DEFAULT 0,
+    estado        TEXT NOT NULL DEFAULT 'PERMITIDO',
+    baneado_en    INTEGER,
+    motivo        TEXT
+  );
+  -- El listado sale ordenado por actividad, que es como se lo mira.
+  CREATE INDEX IF NOT EXISTS clientes_api_visto ON clientes_api (ultimo_visto);
+
   CREATE TABLE IF NOT EXISTS events (
     id             TEXT PRIMARY KEY,
     ts             INTEGER NOT NULL,

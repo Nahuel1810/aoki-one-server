@@ -43,6 +43,7 @@ import { MAPA_DE_REGISTROS_POR_DEFECTO } from '../transport/stepHandshake.js'
 import type { RespuestaEsperada } from '../transport/stepHandshake.js'
 import { ENLACE_APAGADO, type ReporteDeEnlace } from '../sync/link.js'
 import { clasificarBind } from '../exposicionDeRed.js'
+import type { EstadoDeCliente } from '../persistence/clientRepository.js'
 
 export type CuerpoDeRespuesta<T> =
   | { readonly ok: true; readonly data: T; readonly created?: boolean }
@@ -145,6 +146,55 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
 
   const app = express()
   app.use(express.json())
+
+  /**
+   * De donde viene la request.
+   *
+   * Sale del SOCKET, nunca de `X-Forwarded-For` ni de `req.ip`. Esos headers los
+   * escribe quien llama, asi que confiar en ellos convertiria el padron en
+   * decorativo: cualquiera esquivaria un baneo mandando otra IP en un header. El
+   * agente escucha directo en la LAN, sin proxy adelante, asi que el socket es la
+   * identidad real y la unica que no se puede falsear desde afuera.
+   *
+   * `::ffff:192.168.1.40` se normaliza a `192.168.1.40`: es la misma maquina
+   * escrita de dos formas, y sin normalizar un baneo no agarraria las dos.
+   */
+  function ipDe(req: Request): string {
+    const cruda = req.socket.remoteAddress ?? 'desconocida'
+    return cruda.startsWith('::ffff:') ? cruda.slice('::ffff:'.length) : cruda
+  }
+
+  // El padron corre sobre /api y no sobre /health: health es la sonda de vida y
+  // no da ningun control, asi que dejarla pasar no abre nada y evita que un
+  // baneo apague el monitoreo.
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    const ip = ipDe(req)
+    let estado: EstadoDeCliente
+    try {
+      estado = repositorios.clientes.registrarVisita(ip, orquestador.reloj.ahoraMs())
+    } catch (causa) {
+      // FALLA ABIERTO, y es deliberado. El padron es una ayuda para investigar,
+      // no una puerta de la que dependa la planta: si SQLite se cae, cortar toda
+      // la API dejaria al operario sin poder pedir una orden por un problema que
+      // no tiene nada que ver con el. Se deja pasar y se grita.
+      //
+      // Va con try/catch y no envuelto en `atender` porque better-sqlite3 tira
+      // SINCRONO: sin esto el throw se escapa del middleware, lo agarra el
+      // handler por defecto de Express y la tablet recibe una pagina HTML con el
+      // detalle del error adentro.
+      orquestador.logger.error('CLIENT_REGISTRY_FAILED', {
+        ip,
+        motivo: causa instanceof Error ? causa.message : String(causa),
+      })
+      next()
+      return
+    }
+    if (estado === 'BANEADO') {
+      error(res, 403, `el cliente ${ip} esta baneado en este agente`)
+      return
+    }
+    next()
+  })
 
   function ok(res: Response, estado: number, data: unknown): void {
     const cuerpo: CuerpoDeRespuesta<unknown> = { ok: true, data }
@@ -408,13 +458,13 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // arranco. Reanudar despierta el loop para que no espere al tick de seguridad.
   app.post('/api/orders/queue/:robotId/pause', (req: Request, res: Response) => {
     atender(res, async () => {
-      await fijarPausa(texto(req.params['robotId']), true, res)
+      await fijarPausa(texto(req.params['robotId']), true, res, ipDe(req))
     })
   })
 
   app.post('/api/orders/queue/:robotId/resume', (req: Request, res: Response) => {
     atender(res, async () => {
-      await fijarPausa(texto(req.params['robotId']), false, res)
+      await fijarPausa(texto(req.params['robotId']), false, res, ipDe(req))
     })
   })
 
@@ -624,7 +674,9 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           entidadId: locationCode,
           evento: 'SLOT_RELEASED_MANUAL',
           severidad: 'INFO',
-          metadata: { robotId: robot.id, estadoPrevio, ordenId },
+          // La IP queda en el evento: es lo que permite reconstruir QUIEN libero
+          // un slot cuando despues aparece un cajon donde no iba.
+          metadata: { robotId: robot.id, estadoPrevio, ordenId, ip: ipDe(req) },
         })
 
         ok(res, 200, { locationCode, status: 'LIBRE', previousStatus: estadoPrevio })
@@ -632,6 +684,66 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       }
 
       error(res, 404, 'SLOT_INEXISTENTE')
+    })
+  })
+
+  // ---------------------------------------------------------------- clientes
+  //
+  // RF22 — Quien esta llamando a la API local, y como cortarle el acceso a uno.
+  //
+  // El LISTADO va sin credencial: es lectura, y es lo que alguien mira cuando
+  // sospecha algo. El BANEO la exige, y no por simetria: sin credencial, quien
+  // quisiera parar el robot solo tendria que banear la IP de la tablet. La
+  // credencial esta ahi para que un ataque no pueda usar esta herramienta como
+  // interruptor de la planta.
+  app.get('/api/clients', (_req: Request, res: Response) => {
+    atender(res, () => {
+      const clientes = repositorios.clientes.listar().map((cliente) => ({
+        ip: cliente.ip,
+        firstSeen: cliente.primeraVez,
+        lastSeen: cliente.ultimoVisto,
+        calls: cliente.llamadas,
+        status: cliente.estado,
+        bannedAt: cliente.baneadoEn,
+        reason: cliente.motivo,
+      }))
+      ok(res, 200, clientes)
+      return Promise.resolve()
+    })
+  })
+
+  app.post('/api/clients/:ip/ban', exigirMantenimiento, (req: Request, res: Response) => {
+    atender(res, () => {
+      const ip = texto(req.params['ip'])
+
+      // Banear loopback dejaria sin acceso a la propia notebook, que es desde
+      // donde se administra —incluido el desbaneo—. No se permite.
+      if (clasificarBind(ip) === 'LOOPBACK') {
+        error(res, 400, 'no se puede banear loopback: es desde donde se administra el agente')
+        return Promise.resolve()
+      }
+
+      const motivo = req.body === undefined ? null : BANEO.parse(req.body ?? {}).motivo
+      const cliente = repositorios.clientes.banear(ip, orquestador.reloj.ahoraMs(), motivo ?? null)
+      if (cliente === undefined) {
+        error(res, 404, `el cliente ${ip} nunca llamo a este agente`)
+        return Promise.resolve()
+      }
+      ok(res, 200, { ip: cliente.ip, status: cliente.estado, reason: cliente.motivo })
+      return Promise.resolve()
+    })
+  })
+
+  app.post('/api/clients/:ip/unban', exigirMantenimiento, (req: Request, res: Response) => {
+    atender(res, () => {
+      const ip = texto(req.params['ip'])
+      const cliente = repositorios.clientes.desbanear(ip)
+      if (cliente === undefined) {
+        error(res, 404, `el cliente ${ip} nunca llamo a este agente`)
+        return Promise.resolve()
+      }
+      ok(res, 200, { ip: cliente.ip, status: cliente.estado })
+      return Promise.resolve()
     })
   })
 
@@ -795,7 +907,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
    * silencio una pausa que despues nadie puede reanudar desde el front, porque
    * ese robot no aparece en ninguna pantalla.
    */
-  async function fijarPausa(robotId: string, pausada: boolean, res: Response): Promise<void> {
+  async function fijarPausa(
+    robotId: string,
+    pausada: boolean,
+    res: Response,
+    ip: string,
+  ): Promise<void> {
     const cambio = await repositorios.robots.fijarPausaDeCola(
       robotId,
       pausada,
@@ -813,7 +930,9 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       entidadId: robotId,
       evento: pausada ? 'QUEUE_PAUSED' : 'QUEUE_RESUMED',
       severidad: 'INFO',
-      metadata: {},
+      // Quien paro o arranco la cola queda registrado: es una accion que deja al
+      // robot quieto y alguien tiene que poder preguntar de donde salio.
+      metadata: { ip },
     })
 
     if (!pausada) {
@@ -899,6 +1018,11 @@ const ALTA_DE_ORDEN = z.object({
 
 const SIMULACION = z.object({
   locationCode: z.string().trim().min(1, 'locationCode es requerido'),
+})
+
+const BANEO = z.object({
+  /** Por que se lo baneo. Opcional, pero es lo que explica el corte dentro de seis meses. */
+  motivo: z.string().trim().min(1).max(500).optional(),
 })
 
 const LIBERACION_DE_SLOT = z.object({
