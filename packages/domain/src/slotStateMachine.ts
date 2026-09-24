@@ -150,16 +150,53 @@ export type EventoSlot =
    * rechaza la liberacion cuando la orden que retiene el slot esta IN_PROGRESS);
    * el dominio no la puede hacer porque no conoce la orden, solo su id.
    */
-  | { readonly tipo: 'LIBERAR_MANUAL' }
+  /**
+   * Salida del operario: corrige los libros sin mover el robot.
+   *
+   * `slotVacioConfirmado` es la DECLARACION de que el slot ya no tiene cajon
+   * encima. No es ceremonia: si el slot tiene un cajon en libros y se lo libera
+   * sin mirar, los libros pasan a decir LIBRE mientras el cajon sigue apoyado, y
+   * el proximo PICK manda el carro a ese mismo slot y empuja el cajon viejo con
+   * el nuevo. Eso ya paso en planta por el fallback de PUT (ver RF11), y esta es
+   * la otra puerta al mismo choque.
+   */
+  | { readonly tipo: 'LIBERAR_MANUAL'; readonly slotVacioConfirmado: boolean }
 
 export type NombreEventoSlot = EventoSlot['tipo']
 
+
+/**
+ * Se quiso liberar un slot que en libros todavia tiene un cajon, sin declarar
+ * que se lo saco fisicamente.
+ *
+ * No es una transicion indefinida —LIBERAR_MANUAL vale desde cualquier estado—
+ * sino una que exige mirar el slot antes. Por eso tiene codigo propio: el
+ * llamador tiene que poder decirle a la persona QUE cajon hay y de donde salio,
+ * no un "transicion invalida" que no se puede accionar.
+ */
+export type SlotConCajonEnLibros = {
+  readonly codigo: 'SLOT_CON_CAJON_EN_LIBROS'
+  readonly desde: NombreEstadoSlot
+  /** baseCode del que salio el cajon, para que la persona sepa que esta mirando. */
+  readonly ubicacionDeOrigen: string
+}
+
 /** Una transicion que la maquina no define. Es error del dominio, no null. */
-export type ErrorTransicionSlot = {
+export type TransicionInvalida = {
   readonly codigo: 'TRANSICION_INVALIDA'
   readonly desde: NombreEstadoSlot
   readonly evento: NombreEventoSlot
 }
+
+/**
+ * Por que `transicionarSlot` puede rechazar.
+ *
+ * Los dos van juntos —y no `SlotConCajonEnLibros` suelto— porque los emite la
+ * MISMA funcion: separarlos obligaria a cada llamador que solo propaga el error
+ * a nombrar un rechazo que su evento no puede producir. Se distinguen por
+ * `codigo`, y `desde` esta en los dos.
+ */
+export type ErrorTransicionSlot = TransicionInvalida | SlotConCajonEnLibros
 
 /**
  * El slot pedido no existe en la zona de pickeo de ese robot.
@@ -184,6 +221,29 @@ export type SlotInexistente = {
 }
 
 /**
+ * El cajon que el slot tiene EN LIBROS, o null si no tiene ninguno.
+ *
+ * OCUPADO siempre sostiene uno; RESERVADO y DEVOLVIENDO pueden sostenerlo o no
+ * (RF11: la devolucion estandar preserva el cajon, la manual fuera-de-libros
+ * arranca en null). LIBRE, BUSCANDO y ERROR nunca. Que sea una funcion y no un
+ * `in` suelto es a proposito: agregar un estado con contenido obliga a pasar por
+ * aca.
+ */
+export function cajonEnLibros(estado: EstadoSlot): CajonEnSlot | null {
+  switch (estado.estado) {
+    case 'OCUPADO':
+      return estado.contenido
+    case 'RESERVADO':
+    case 'DEVOLVIENDO':
+      return estado.contenido
+    case 'LIBRE':
+    case 'BUSCANDO':
+    case 'ERROR':
+      return null
+  }
+}
+
+/**
  * Funcion total (estado, evento) -> estado | error.
  *
  * Pura y sin slot de por medio: el llamador ya resolvio de que slot habla, asi
@@ -193,7 +253,7 @@ export function transicionarSlot(
   estado: EstadoSlot,
   evento: EventoSlot,
 ): Result<EstadoSlot, ErrorTransicionSlot> {
-  const rechazo: Result<EstadoSlot, ErrorTransicionSlot> = {
+  const rechazo: Result<EstadoSlot, TransicionInvalida> = {
     ok: false,
     error: { codigo: 'TRANSICION_INVALIDA', desde: estado.estado, evento: evento.tipo },
   }
@@ -249,11 +309,28 @@ export function transicionarSlot(
         ? { ok: true, valor: { estado: 'LIBRE' } }
         : rechazo
 
-    case 'LIBERAR_MANUAL':
-      // Total: desde CUALQUIER estado. Es la salida del operario cuando la
-      // maniobra no va a volver (ver `EventoSlot`). El cajon que hubiera quedado
-      // apoyado deja de estar en libros, que es justamente lo que el operario
-      // esta declarando al liberar.
+    case 'LIBERAR_MANUAL': {
+      // Desde CUALQUIER estado: es la salida del operario cuando la maniobra no
+      // va a volver (ver `EventoSlot`), y bloquearla dejaria el slot muerto hasta
+      // que alguien edite SQLite a mano.
+      //
+      // Pero si el slot tiene un cajon EN LIBROS, liberarlo lo borra del
+      // inventario. Eso solo es cierto si alguien fue y lo saco: si no, los
+      // libros dicen LIBRE con el cajon todavia apoyado y el proximo PICK lo
+      // choca. Entonces se pide la declaracion explicita; sin ella, se rechaza
+      // diciendo QUE cajon hay para que la persona lo vaya a mirar.
+      const cajon = cajonEnLibros(estado)
+      if (cajon !== null && !evento.slotVacioConfirmado) {
+        return {
+          ok: false,
+          error: {
+            codigo: 'SLOT_CON_CAJON_EN_LIBROS',
+            desde: estado.estado,
+            ubicacionDeOrigen: cajon.cajon.ubicacionDeOrigen,
+          },
+        }
+      }
       return { ok: true, valor: { estado: 'LIBRE' } }
+    }
   }
 }

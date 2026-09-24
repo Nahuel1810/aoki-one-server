@@ -31,6 +31,8 @@ const SNAPSHOT = {
       currentBox: { id: 'CAJON-9', sourceLocationCode: '3X06AC3' },
       logicalPickStackDepth: 2,
     },
+    // Inconsistente: el legacy lo da por OCUPADO pero no dice que cajon tiene.
+    { locationCode: '3X10AF2', robotId: '3X', status: 'OCUPADO', currentBox: null },
     // Podrido: la ubicacion no cumple la gramatica.
     { locationCode: 'ESTANTE-DEL-FONDO', robotId: '3X', status: 'LIBRE' },
     // Podrido: estado que no existe.
@@ -160,7 +162,7 @@ describe('migracion desde la base actual', () => {
     if (!reporte.ok) {
       return
     }
-    expect(reporte.valor.slots.migrados).toBe(2)
+    expect(reporte.valor.slots.migrados).toBe(3)
     expect(reporte.valor.ordenes.migrados).toBe(1)
     expect(reporte.valor.metricas.migrados).toBe(1)
     expect(reporte.valor.robots.migrados).toBe(1)
@@ -209,13 +211,14 @@ describe('migracion desde la base actual', () => {
       return
     }
     expect(segunda.valor.slots.migrados).toBe(0)
-    expect(segunda.valor.slots.yaMigrados).toBe(2)
+    // 3: el slot bloqueado tambien esta, y la segunda corrida NO lo pisa.
+    expect(segunda.valor.slots.yaMigrados).toBe(3)
     expect(segunda.valor.ordenes.migrados).toBe(0)
     expect(segunda.valor.ordenes.yaMigrados).toBe(1)
     expect(segunda.valor.metricas.yaMigrados).toBe(1)
     expect(segunda.valor.robots.yaMigrados).toBe(1)
 
-    expect(contar('slots')).toBe(2)
+    expect(contar('slots')).toBe(3)
     expect(contar('orders')).toBe(1)
     expect(contar('order_metrics')).toBe(1)
     // Ni siquiera el contador de version de la fila se movio: no hubo escritura.
@@ -255,7 +258,7 @@ describe('migracion desde la base actual', () => {
       return
     }
     expect(simulada.valor.simulacion).toBe(true)
-    expect(simulada.valor.slots.migrados).toBe(2)
+    expect(simulada.valor.slots.migrados).toBe(3)
     expect(simulada.valor.ordenes.migrados).toBe(1)
     expect(simulada.valor.metricas.migrados).toBe(1)
 
@@ -299,8 +302,38 @@ describe('migracion desde la base actual', () => {
     })
 
     // Y lo sano entro igual: una fila podrida no puede costar la migracion.
-    expect(contar('slots')).toBe(2)
+    expect(contar('slots')).toBe(3)
     expect(contar('order_metrics')).toBe(1)
+  })
+
+  it('el OCUPADO sin cajon queda BLOQUEADO, no salteado: saltearlo lo volveria LIBRE', async () => {
+    // El caso: el legacy dice que el slot tiene un cajon encima pero no dice
+    // cual. No se puede inventar el cajon, y tampoco se lo puede saltear: sin
+    // fila propia, `sembrarZonaDePickeo` del proximo arranque lo crea LIBRE y el
+    // proximo PICK manda el carro contra el cajon que quiza sigue apoyado.
+    const reporte = await correr(false)
+
+    expect(reporte.ok).toBe(true)
+    if (!reporte.ok) {
+      return
+    }
+
+    // Se reporta, porque hay que ir a mirarlo.
+    expect(reporte.valor.slots.omitidos).toContainEqual({
+      referencia: '3X10AF2',
+      motivo: { codigo: 'OCUPADO_SIN_CAJON' },
+    })
+
+    // Y ADEMAS quedo escrito, fuera de juego.
+    const fila = escenario.destino.sql
+      .prepare('SELECT estado_json FROM slots WHERE location_code = ?')
+      .get('3X10AF2') as { estado_json: string } | undefined
+    expect(fila).toBeDefined()
+    const estado = JSON.parse(fila?.estado_json ?? '{}') as { estado?: string; motivo?: string }
+    expect(estado.estado).toBe('ERROR')
+    // Con el motivo adentro: quien lo abra tiene que entender por que sin ir al
+    // reporte de una migracion que corrio hace meses.
+    expect(estado.motivo).toContain('OCUPADO')
   })
 
   it('no toca la base origen: ni una tabla nueva ni una fila cambiada', async () => {

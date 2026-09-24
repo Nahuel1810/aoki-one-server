@@ -11,10 +11,16 @@
 // cierre de la maniobra y sigue rechazando desde BUSCANDO —si el ciclo pudiera
 // cerrar un PICK sin haber apoyado el cajon, el slot quedaria LIBRE con un cajon
 // arriba—, y LIBERAR_MANUAL es la salida que pide una persona.
+//
+// LO QUE LIBERAR_MANUAL *NO* HACE: borrar de los libros un cajon que sigue
+// apoyado. Si el slot tiene cajon en libros hay que declarar que se lo saco.
+// Liberar sin mirar deja los libros diciendo LIBRE con el cajon ahi, y el
+// proximo PICK manda el carro a ese slot y lo empuja — es el mismo accidente
+// que produjo el fallback de PUT en planta (RF11), por otra puerta.
 
 import { describe, expect, it } from 'vitest'
 
-import { transicionarSlot } from './slotStateMachine.js'
+import { cajonEnLibros, transicionarSlot } from './slotStateMachine.js'
 import type { EstadoSlot } from './slotStateMachine.js'
 
 const CAJON = { id: 'CAJON-1', ubicacionDeOrigen: '3X04AA3' }
@@ -30,14 +36,60 @@ const TODOS_LOS_ESTADOS: readonly EstadoSlot[] = [
 ]
 
 describe('liberacion manual de un slot de pickeo', () => {
-  it('LIBERAR_MANUAL deja LIBRE desde cualquiera de los seis estados', () => {
+  it('LIBERAR_MANUAL declarado deja LIBRE desde cualquiera de los seis estados', () => {
     for (const estado of TODOS_LOS_ESTADOS) {
-      const resultado = transicionarSlot(estado, { tipo: 'LIBERAR_MANUAL' })
+      const resultado = transicionarSlot(estado, {
+        tipo: 'LIBERAR_MANUAL',
+        slotVacioConfirmado: true,
+      })
 
       expect(resultado.ok).toBe(true)
       if (resultado.ok) {
         expect(resultado.valor).toEqual({ estado: 'LIBRE' })
       }
+    }
+  })
+
+  it('sin declarar, libera los estados sin cajon y rechaza los que tienen uno', () => {
+    for (const estado of TODOS_LOS_ESTADOS) {
+      const resultado = transicionarSlot(estado, {
+        tipo: 'LIBERAR_MANUAL',
+        slotVacioConfirmado: false,
+      })
+
+      if (cajonEnLibros(estado) === null) {
+        // Sin cajon no hay nada que borrar: es la correccion de libros para la
+        // que existe la salida (un PICK fallido que dejo el slot RESERVADO).
+        expect(resultado.ok).toBe(true)
+        continue
+      }
+
+      expect(resultado.ok).toBe(false)
+      if (!resultado.ok) {
+        expect(resultado.error).toEqual({
+          codigo: 'SLOT_CON_CAJON_EN_LIBROS',
+          desde: estado.estado,
+          // De donde salio el cajon: es lo que la persona necesita para saber
+          // que esta yendo a mirar.
+          ubicacionDeOrigen: CAJON.ubicacionDeOrigen,
+        })
+      }
+    }
+  })
+
+  it('el rechazo alcanza a RESERVADO y DEVOLVIENDO que conservaron el cajon', () => {
+    // No es solo OCUPADO: la devolucion estandar de RF11 PRESERVA el cajon al
+    // reservar, y RF13 deja el slot en ese estado cuando un paso falla. Es
+    // exactamente el slot que alguien va a querer destrabar a mano.
+    for (const estado of [
+      { estado: 'RESERVADO', ordenId: 'ORD-1', contenido: { cajon: CAJON, pendingReturns: 1 } },
+      { estado: 'DEVOLVIENDO', ordenId: 'ORD-1', contenido: { cajon: CAJON, pendingReturns: 1 } },
+    ] as const) {
+      const resultado = transicionarSlot(estado, {
+        tipo: 'LIBERAR_MANUAL',
+        slotVacioConfirmado: false,
+      })
+      expect(resultado.ok).toBe(false)
     }
   })
 
@@ -62,7 +114,10 @@ describe('liberacion manual de un slot de pickeo', () => {
   it('el slot liberado a mano queda tomable de nuevo por un PICK', () => {
     // Es la razon de ser de la salida: que el slot VUELVA a la zona util, no que
     // quede en un estado terminal distinto.
-    const liberado = transicionarSlot({ estado: 'BUSCANDO', ordenId: 'ORD-1' }, { tipo: 'LIBERAR_MANUAL' })
+    const liberado = transicionarSlot(
+      { estado: 'BUSCANDO', ordenId: 'ORD-1' },
+      { tipo: 'LIBERAR_MANUAL', slotVacioConfirmado: false },
+    )
     expect(liberado.ok).toBe(true)
     if (!liberado.ok) {
       return

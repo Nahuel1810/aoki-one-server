@@ -54,12 +54,27 @@ export type MotivoDeOmision =
   | { readonly codigo: 'LOCATION_CODE_INVALIDO'; readonly valor: string }
   /** Un RESERVADO / BUSCANDO / DEVOLVIENDO sin la orden que lo reserva. */
   | { readonly codigo: 'SIN_ORDEN_QUE_RESERVA'; readonly estado: string }
-  /** Un OCUPADO sin cajon: el estado nuevo exige el contenido, no lo admite nulo. */
+  /**
+   * Un OCUPADO sin cajon: el estado nuevo exige el contenido, no lo admite nulo.
+   *
+   * A diferencia del resto de los motivos, este SI escribe el slot: lo deja en
+   * ERROR. Saltearlo lo dejaria sin fila, y el sembrado del proximo arranque lo
+   * crearia LIBRE —un slot que el legacy daba por ocupado pasaria a estar
+   * disponible—, asi que el proximo PICK mandaria el carro contra el cajon que
+   * quiza sigue apoyado. En ERROR el slot queda fuera de juego hasta que alguien
+   * lo mire, que es lo que esta fila pide.
+   */
   | { readonly codigo: 'OCUPADO_SIN_CAJON' }
   /** El destino ya no esta como lo dejo la migracion anterior: no se pisa. */
   | { readonly codigo: 'DESTINO_YA_MODIFICADO'; readonly estadoActual: string }
   | { readonly codigo: 'EXTERNAL_ORDER_ID_DUPLICADO'; readonly externalOrderId: string }
 
+/**
+ * Fila que no se pudo migrar tal cual, y que hay que mirar a mano.
+ *
+ * Casi todas se saltean sin escribir nada. La excepcion es `OCUPADO_SIN_CAJON`,
+ * que escribe el slot en ERROR: ahi saltear seria inseguro (ver su motivo).
+ */
 export interface Omitido {
   /** Con que identificar la fila en la base origen: locationCode, id de orden. */
   readonly referencia: string
@@ -352,16 +367,29 @@ export async function migrar(
         }
 
         const estado = aEstadoSlot(slot.data)
-        if (!estado.ok) {
+        let estadoFinal: EstadoSlot
+        if (estado.ok) {
+          estadoFinal = estado.valor
+        } else {
           slots.omitidos.push({ referencia: ubicacion.valor.baseCode, motivo: estado.error })
-          continue
+          if (estado.error.codigo !== 'OCUPADO_SIN_CAJON') {
+            continue
+          }
+          // No se saltea: sin fila, el sembrado del proximo arranque lo crearia
+          // LIBRE. Queda bloqueado con el motivo a la vista.
+          estadoFinal = {
+            estado: 'ERROR',
+            motivo:
+              'migrado desde la base anterior: figuraba OCUPADO pero sin cajon. ' +
+              'Mira el slot y liberalo a mano cuando sepas que tiene.',
+          }
         }
 
         // El legacy usa la estanteria como robotId mientras no haya mapeo
         // explicito, y el snapshot ya trae el valor resuelto: se respeta si esta.
         const robotId = slot.data.robotId ?? ubicacion.valor.estanteria
         estanterias.set(robotId, ubicacion.valor.estanteria)
-        planSlots.push({ robotId, locationCode: ubicacion.valor.baseCode, estado: estado.valor })
+        planSlots.push({ robotId, locationCode: ubicacion.valor.baseCode, estado: estadoFinal })
       }
 
       for (const fila of snapshot.data.orders ?? []) {

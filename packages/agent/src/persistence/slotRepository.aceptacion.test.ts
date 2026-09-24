@@ -41,4 +41,48 @@ describe('slotRepository', () => {
       base.cerrar()
     }
   })
+
+  it('sembrar la zona NO pisa el slot que quedo con un cajon apoyado', async () => {
+    // El arranque siembra la zona de pickeo SIEMPRE, no solo la primera vez. Si
+    // el sembrado reescribiera los slots, cada reinicio del agente dejaria los
+    // doce en LIBRE —incluido el que tiene un cajon encima— y el proximo PICK
+    // mandaria el carro contra ese cajon. Un reinicio no puede ser un evento que
+    // mueva cajones. Lo sostiene el INSERT OR IGNORE del sembrado.
+    const base = abrirBase(':memory:')
+
+    try {
+      const repositorio = crearSlotRepository(base)
+      const zona = ['3X02AE1', '3X02AE2', '3X02AE3']
+      await repositorio.sembrarZonaDePickeo('1', zona)
+
+      const ocupado = await repositorio.guardarEstado('1', '3X02AE2', {
+        estado: 'OCUPADO',
+        contenido: {
+          cajon: { id: 'CAJON-1', ubicacionDeOrigen: '3X04AA3' },
+          pendingReturns: 1,
+        },
+      })
+      expect(ocupado.ok).toBe(true)
+
+      // El reinicio.
+      const resembrado = await repositorio.sembrarZonaDePickeo('1', zona)
+
+      const despues = await repositorio.buscar('1', '3X02AE2')
+      expect(despues?.estado).toEqual({
+        estado: 'OCUPADO',
+        contenido: {
+          cajon: { id: 'CAJON-1', ubicacionDeOrigen: '3X04AA3' },
+          pendingReturns: 1,
+        },
+      })
+
+      // Y la zona sigue siendo de tres: el sembrado no duplico filas.
+      expect(resembrado.ok).toBe(true)
+      if (resembrado.ok) {
+        expect(resembrado.valor).toHaveLength(3)
+      }
+    } finally {
+      base.cerrar()
+    }
+  })
 })

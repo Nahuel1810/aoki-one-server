@@ -518,9 +518,16 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // liberarlo ahi deja el cajon a mitad de camino con los libros diciendo que el
   // slot esta vacio, y el proximo PICK lo elige y manda el carro encima. El
   // operario espera a que termine —o cancela— y despues libera.
+  //
+  // LA OTRA GUARDA vive en el dominio: si el slot tiene un cajon en libros,
+  // liberarlo exige declarar que se lo saco. Ver `LIBERAR_MANUAL`.
   app.post('/api/slots/:locationCode/release', (req: Request, res: Response) => {
     atender(res, async () => {
       const locationCode = texto(req.params['locationCode'])
+      const confirmacion = validar(LIBERACION_DE_SLOT, req.body ?? {}, res)
+      if (confirmacion === null) {
+        return
+      }
       const robots = await repositorios.robots.listar(siteId)
 
       for (const robot of robots) {
@@ -540,9 +547,24 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         }
 
         const estadoPrevio = slot.estado.estado
-        const siguiente = transicionarSlot(slot.estado, { tipo: 'LIBERAR_MANUAL' })
+        const siguiente = transicionarSlot(slot.estado, {
+          tipo: 'LIBERAR_MANUAL',
+          slotVacioConfirmado: confirmacion.slotVacioConfirmado,
+        })
         if (!siguiente.ok) {
-          error(res, 409, siguiente.error.codigo)
+          // El rechazo por cajon en libros se explica: decir "SLOT_CON_CAJON_EN_
+          // LIBROS" a secas manda a la persona a reintentar con el flag sin haber
+          // ido a mirar, que es exactamente lo que el rechazo quiere evitar.
+          error(
+            res,
+            409,
+            siguiente.error.codigo === 'SLOT_CON_CAJON_EN_LIBROS'
+              ? `el slot ${locationCode} figura con un cajon de ${siguiente.error.ubicacionDeOrigen} apoyado: ` +
+                  'anda a mirarlo. Si el cajon ya no esta, reintenta con {"slotVacioConfirmado": true}; si ' +
+                  'sigue ahi, sacalo primero — liberarlo asi lo borra del inventario y el proximo PICK manda ' +
+                  'el carro a ese mismo slot'
+              : siguiente.error.codigo,
+          )
           return
         }
 
@@ -827,6 +849,16 @@ const SIMULACION = z.object({
   locationCode: z.string().trim().min(1, 'locationCode es requerido'),
 })
 
+const LIBERACION_DE_SLOT = z.object({
+  /**
+   * Declaracion de que el slot ya no tiene el cajon encima.
+   *
+   * Default false: liberar un slot con cajon en libros tiene que ser un acto
+   * deliberado. Omitir el campo es no haber mirado.
+   */
+  slotVacioConfirmado: z.boolean().default(false),
+})
+
 const ALTA_DE_DISPOSITIVO = z.object({
   robotId: z.string().trim().min(1, 'robotId es requerido'),
   type: TIPO_DE_DISPOSITIVO,
@@ -1069,7 +1101,7 @@ function mensajeDeCancelacion(error: ErrorDeCancelacionDeOrden): string {
       // Las dos salidas, en el mismo texto: el retry es la normal, la liberacion
       // manual es la que queda cuando el retry no va a funcionar (cajon trabado,
       // PLC en falla). Antes esta respuesta era un callejon sin salida.
-      return `el pedido todavia tiene tomado el slot ${error.slotLocationCode}: reintentalo para que el robot lo libere, o libera el slot a mano con POST /api/slots/${error.slotLocationCode}/release y cancela despues`
+      return `el pedido todavia tiene tomado el slot ${error.slotLocationCode}: reintentalo para que el robot lo libere, o —si el slot ya no tiene el cajon encima— liberalo a mano con POST /api/slots/${error.slotLocationCode}/release y cancela despues`
   }
 }
 

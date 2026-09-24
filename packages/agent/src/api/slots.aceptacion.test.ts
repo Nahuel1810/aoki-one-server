@@ -19,6 +19,10 @@
 //    explicita de RF06, LIBRE no tiene transicion de salida por LIBERAR, y si
 //    eso es no-op idempotente o error de dominio es una decision que ningun test
 //    portado fija. Entra con T19.
+//  - Y liberar un slot OCUPADO exige declarar que el cajon ya no esta. El legacy
+//    liberaba de una: los libros pasaban a LIBRE con el cajon todavia apoyado y
+//    el proximo PICK mandaba el carro a ese mismo slot. Es el mismo choque que
+//    produjo el fallback de PUT en planta, por otra puerta.
 //
 // El listado y la liberacion van SIN credencial (RF22, nivel operario: el
 // control es de red, el listener bindea a la IP de LAN).
@@ -132,7 +136,7 @@ describe('API local de slots de pickeo', () => {
     }
   })
 
-  it('POST /api/slots/:locationCode/release libera el slot y deja el evento', async () => {
+  it('POST /api/slots/:locationCode/release exige declarar el slot vacio si tiene cajon', async () => {
     const agente = await levantarAgente()
 
     try {
@@ -150,7 +154,25 @@ describe('API local de slots de pickeo', () => {
       )
       expect(ocupado.ok).toBe(true)
 
-      const respuesta = await fetch(urlDe(agente, '/api/slots/3X02AE1/release'), { method: 'POST' })
+      // A ciegas NO: el slot figura con un cajon apoyado y liberarlo lo borraria
+      // del inventario con el cajon todavia ahi.
+      const aCiegas = await fetch(urlDe(agente, '/api/slots/3X02AE1/release'), { method: 'POST' })
+      expect(aCiegas.status).toBe(409)
+      const motivo = (await aCiegas.json()) as CuerpoDeRespuesta<never>
+      // El mensaje tiene que decir QUE cajon hay: sin eso la persona no sabe que
+      // fue a mirar, y el rechazo se vuelve un tramite que se saltea con el flag.
+      expect(JSON.stringify(motivo)).toContain('3X04AA3')
+
+      const sigueOcupado = await agente.orquestador.repositorios.slots.buscar(ROBOT_ID, '3X02AE1')
+      expect(sigueOcupado?.estado.estado).toBe('OCUPADO')
+
+      // Declarando que el cajon ya no esta: ahi si, que es para lo que existe la
+      // salida (un cajon trabado que alguien saco a mano).
+      const respuesta = await fetch(urlDe(agente, '/api/slots/3X02AE1/release'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slotVacioConfirmado: true }),
+      })
       expect(respuesta.status).toBe(200)
 
       const slot = await agente.orquestador.repositorios.slots.buscar(ROBOT_ID, '3X02AE1')
