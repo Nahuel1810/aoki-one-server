@@ -1,0 +1,27 @@
+{
+  "name": "@aoki-one/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor de pedidos: ingreso HMAC, cola durable y entrega al agente por long-poll",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "emitir-credencial": "node dist/herramientas/emitirCredencial.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@aoki-one/domain": "*",
+    "better-sqlite3": "^12.9.0",
+    "express": "^4.19.2",
+    "zod": "^4.6.5"
+  }
+}

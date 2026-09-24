@@ -1,0 +1,187 @@
+// RF15 — El agente rehidrata al arrancar, ANTES de pedir trabajo nuevo.
+//
+// `rehidratar()` tenia su test de unidad pero no estaba cableado a la
+// composicion: su unico consumidor era ese test. Como el ciclo del robot solo
+// lista PENDING y no toma un robot con `ordenActivaId`, una orden que quedo
+// IN_PROGRESS por un reinicio a mitad de maniobra quedaba huerfana —nadie la
+// volvia a tomar y el robot quedaba ocupado para siempre—. Este test afirma el
+// cableado de punta a punta, que es lo que el de unidad no podia ver.
+//
+// Los dos casos que decide la rehidratacion se afirman aca porque la diferencia
+// entre ellos es si el robot se mueve solo o no:
+//   - murio antes de que el carro pudiera tomar el cajon (pasos 1 y 2): se
+//     replaya entera desde HOMING, sin intervencion;
+//   - murio desde el paso 3 en adelante: el cajon puede estar en el carro, asi
+//     que la orden queda en ERROR y el robot NO se mueve hasta que el operario
+//     devuelva el cajon y de el retry (el mismo procedimiento de RF13).
+//
+// El "reinicio" se representa sembrando en la base el estado que un corte deja
+// escrito (orden IN_PROGRESS a mitad de pasos, robot BUSY con esa orden activa)
+// y arrancando el agente sobre el. Es exactamente lo que `crearAgente` encuentra
+// al abrir una base que ya existia.
+//
+// Lo unico simulado es el PLC: RF20 pone el default en false, asi que va
+// explicito.
+
+import { setTimeout as dormir } from 'node:timers/promises'
+
+import { describe, expect, it } from 'vitest'
+
+import { crearAgente } from '../composition.js'
+import type { Agente } from '../composition.js'
+import type { Orden } from '../persistence/index.js'
+
+const SITE_ID = 'sucursal-test'
+const AGENT_ID = 'AG-TEST'
+const ROBOT_ID = '1'
+const ESTANTERIA = '3X'
+
+/** Ubicacion de guardado del cajon que la orden interrumpida iba a buscar. */
+const ORIGEN = '3X04AA3'
+
+/** Modulo 04 (par) -> lado RIGHT: solo compiten los slots del modulo 02. */
+const ZONA_DE_PICKEO: readonly string[] = ['3X02AE1', '3X02AC1', '3X02AA1']
+
+const ORDEN_HUERFANA = 'o-interrumpida'
+
+const ESPERA_MAXIMA_MS = 10_000
+const INTERVALO_DE_SONDEO_MS = 25
+const TIMEOUT_DEL_TEST_MS = 30_000
+
+const ESTADOS_FINALES = ['DONE', 'ERROR', 'CANCELED']
+
+function crearAgenteDeLaSucursal(): Agente {
+  return crearAgente({
+    siteId: SITE_ID,
+    agentId: AGENT_ID,
+    rutaDeBase: ':memory:',
+    // Sin API: lo que se afirma es el orquestador, no la capa HTTP.
+    montarApi: false,
+    simularPlc: true,
+    httpPuerto: 0,
+    httpBind: '127.0.0.1',
+    zonaDePickeo: ZONA_DE_PICKEO,
+    tokenDeMantenimiento: null,
+    // Enlace APAGADO: la rehidratacion no depende del servidor, y es lo que
+    // RF15 pide que pase ANTES de reclamar trabajo nuevo.
+    enlace: null,
+  })
+}
+
+/** El estado que un corte a mitad de maniobra deja escrito en disco. */
+async function sembrarCorte(agente: Agente, currentStepIndex: number): Promise<void> {
+  const repositorios = agente.orquestador.repositorios
+
+  const robot = await repositorios.robots.guardar({
+    id: ROBOT_ID,
+    siteId: SITE_ID,
+    estanteriaCode: ESTANTERIA,
+    habilitado: true,
+    // El robot quedo tomado por la orden que se estaba ejecutando.
+    estado: 'BUSY',
+    ordenActivaId: ORDEN_HUERFANA,
+  })
+  expect(robot.ok).toBe(true)
+
+  const interrumpida: Orden = {
+    id: ORDEN_HUERFANA,
+    siteId: SITE_ID,
+    robotId: ROBOT_ID,
+    externalOrderId: 'PICK-INTERRUMPIDA',
+    tipo: 'PICK',
+    origen: 'PICKING',
+    estado: 'IN_PROGRESS',
+    locationCode: ORIGEN,
+    targetLocation: null,
+    slotLocationCode: null,
+    currentStepIndex,
+    waitingForSlot: false,
+    errorReason: null,
+    creadaEn: 1_000,
+    iniciadaEn: 1_500,
+    finalizadaEn: null,
+  }
+  const sembrada = await repositorios.ordenes.crear(interrumpida)
+  expect(sembrada.ok).toBe(true)
+}
+
+async function esperarEstadoFinal(agente: Agente): Promise<Orden | undefined> {
+  const repositorios = agente.orquestador.repositorios
+  const limite = Date.now() + ESPERA_MAXIMA_MS
+  let final = await repositorios.ordenes.buscarPorId(ORDEN_HUERFANA)
+  while (!ESTADOS_FINALES.includes(final?.estado ?? '') && Date.now() < limite) {
+    await dormir(INTERVALO_DE_SONDEO_MS)
+    final = await repositorios.ordenes.buscarPorId(ORDEN_HUERFANA)
+  }
+  return final
+}
+
+describe('rehidratacion al arrancar el agente (RF15)', () => {
+  it(
+    'la que murio antes de tocar el cajon vuelve a PENDING y se ejecuta sola',
+    async () => {
+      const agente = crearAgenteDeLaSucursal()
+      // Paso 1 (HOMING) confirmado: el que estaba en vuelo era el elevador, que
+      // no toca el cajon. El carro esta vacio y no hay nada que deshacer a mano.
+      await sembrarCorte(agente, 1)
+
+      await agente.iniciar()
+
+      try {
+        const final = await esperarEstadoFinal(agente)
+
+        expect(final?.estado).toBe('DONE')
+        // Se replayo desde HOMING: el indice volvio a 0 y recorrio los cinco pasos.
+        // Sin rehidratacion habria quedado clavado en 1 y en IN_PROGRESS.
+        expect(final?.currentStepIndex).toBe(5)
+        expect(final?.errorReason).toBeNull()
+        // Llego hasta el final: el cajon quedo apoyado en un slot de la zona.
+        expect(ZONA_DE_PICKEO).toContain(final?.slotLocationCode)
+
+        const pasos = await agente.orquestador.repositorios.pasos.listarPorOrden(ORDEN_HUERFANA)
+        expect(pasos.map((paso) => paso.seq)).toEqual([1, 2, 3, 4, 5])
+
+        // El robot se libero al rehidratar y volvio a IDLE al terminar: si la
+        // orden activa hubiera quedado colgada, el ciclo lo habria salteado
+        // siempre por ROBOT_OCUPADO.
+        const robotFinal = await agente.orquestador.repositorios.robots.buscarPorId(ROBOT_ID)
+        expect(robotFinal?.estado).toBe('IDLE')
+        expect(robotFinal?.ordenActivaId).toBeNull()
+      } finally {
+        await agente.detener()
+      }
+    },
+    TIMEOUT_DEL_TEST_MS,
+  )
+
+  it(
+    'la que murio con el cajon posiblemente en el carro queda en ERROR y el robot no se mueve',
+    async () => {
+      const agente = crearAgenteDeLaSucursal()
+      // Paso 3 (CARRO_BUSCA) en vuelo: nadie sabe si el cajon quedo en el carro,
+      // en el slot o en el aire.
+      await sembrarCorte(agente, 3)
+
+      await agente.iniciar()
+
+      try {
+        const final = await esperarEstadoFinal(agente)
+
+        expect(final?.estado).toBe('ERROR')
+        expect(final?.errorReason).toContain('interrumpida por un reinicio')
+        // Lo que no puede pasar: rehacer HOMING y salir a buscar un cajon que el
+        // robot ya tiene encima. Ni un paso se ejecuto.
+        const pasos = await agente.orquestador.repositorios.pasos.listarPorOrden(ORDEN_HUERFANA)
+        expect(pasos).toEqual([])
+
+        // El robot igual se libera: la orden detenida no lo deja tomado para
+        // siempre, y la cola sigue atendiendo el resto.
+        const robotFinal = await agente.orquestador.repositorios.robots.buscarPorId(ROBOT_ID)
+        expect(robotFinal?.ordenActivaId).toBeNull()
+      } finally {
+        await agente.detener()
+      }
+    },
+    TIMEOUT_DEL_TEST_MS,
+  )
+})
