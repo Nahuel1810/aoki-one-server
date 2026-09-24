@@ -1,0 +1,104 @@
+name: CI
+
+# Se dispara en cualquier push y en cada pull request.
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: workspace de la raiz (packages/domain, packages/agent, packages/server)
+  # mas la suite legacy en node --test que sigue viva durante la reescritura.
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend (workspace raiz)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          # La maquina de desarrollo usa v22.14.0.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # npm ci a secas, sin fallback: si el package-lock.json queda desincronizado del
+      # package.json el pipeline TIENE que romper. Con `npm ci || npm install` esa
+      # desincronizacion pasa silenciosa y CI instala versiones que nadie lockeo.
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Cubre los 3 paquetes (tsc -b) y ademas los *.test.ts, que quedan fuera de los
+      # tsconfig de cada paquete para que no se emitan a dist/.
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Formato (Prettier)
+        run: npm run format:check
+
+      - name: Tests de los paquetes TS (vitest + cobertura)
+        run: npm run test:packages:coverage
+
+      # Suite de aceptacion: los 55 tests portados del servidor legacy (T02). Estan ROJOS
+      # a proposito hasta que T03-T21 implementen el contrato, asi que no bloquean. El paso
+      # existe para que el avance se vea en cada push: cuantos pasan de los 55.
+      # SACAR el continue-on-error cuando la suite llegue a verde, y fusionarla con la de
+      # arriba: a partir de ahi tiene que bloquear.
+      - name: Suite de aceptacion (roja por diseño hasta T21)
+        run: npm run test:aceptacion
+        continue-on-error: true
+
+      # Suite legacy (55 tests en node --test sobre src/ y tests/). Es la red de seguridad
+      # del servidor actual: tiene que seguir verde durante toda la reescritura.
+      - name: Tests legacy (node --test)
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # Frontend: packages/web queda FUERA del npm workspace, tiene su propio
+  # package-lock.json y su propio install, por eso va en un job aparte.
+  # ---------------------------------------------------------------------------
+  web:
+    name: Frontend (packages/web)
+    runs-on: ubuntu-latest
+
+    # El front esta a medio hacer: sus fallos no deben tumbar el pipeline todavia.
+    # SACAR este continue-on-error cuando termine la spec
+    # docs/specs/2026-09-21-frontend-vite-react.md.
+    continue-on-error: true
+
+    defaults:
+      run:
+        working-directory: packages/web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/web/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Formato (Prettier)
+        run: npm run format:check
+
+      - name: Tests (vitest)
+        run: npm run test
