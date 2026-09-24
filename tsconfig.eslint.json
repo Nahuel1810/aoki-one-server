@@ -1,0 +1,31 @@
+{
+  // Proyecto que usa SOLO ESLint para el lint con informacion de tipos, y el script
+  // typecheck:tests para tipar los tests.
+  //
+  // Los tsconfig de cada paquete excluyen los *.test.ts para que `tsc -b` no los
+  // emita a dist/. Ese exclude deja a los tests fuera de todo proyecto y el parser
+  // de typescript-eslint no los puede tipar. Este proyecto los vuelve a incluir,
+  // sin emitir nada.
+  //
+  // `paths` mapea @aoki-one/domain al FUENTE en vez de a dist/. Sin esto el lint
+  // depende de haber corrido el build antes: en un checkout limpio (dist/ esta
+  // gitignoreado) el especificador no resuelve, el dominio queda tipado como any
+  // y saltan las reglas no-unsafe-* de strictTypeChecked. No se usa `references`
+  // porque los fuentes del dominio tambien estan en este `include`, y TS entonces
+  // se niega a resolverlos contra el proyecto referenciado (TS6305).
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "paths": {
+      "@aoki-one/domain": ["./packages/domain/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/domain/src/**/*.ts",
+    "packages/agent/src/**/*.ts",
+    "packages/server/src/**/*.ts"
+  ]
+}
