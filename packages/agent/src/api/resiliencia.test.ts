@@ -66,6 +66,7 @@ async function levantar(): Promise<Levantado> {
   const api = crearServidorHttp({
     orquestador,
     simularPlc: true,
+    httpBind: '127.0.0.1',
     despertar: () => undefined,
     tokenDeMantenimiento: null,
   })

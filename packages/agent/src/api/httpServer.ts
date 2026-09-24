@@ -42,6 +42,7 @@ import type { ClaveDeDispositivo, DispositivoRegistrado } from '../transport/mod
 import { MAPA_DE_REGISTROS_POR_DEFECTO } from '../transport/stepHandshake.js'
 import type { RespuestaEsperada } from '../transport/stepHandshake.js'
 import { ENLACE_APAGADO, type ReporteDeEnlace } from '../sync/link.js'
+import { clasificarBind } from '../exposicionDeRed.js'
 
 export type CuerpoDeRespuesta<T> =
   | { readonly ok: true; readonly data: T; readonly created?: boolean }
@@ -53,6 +54,16 @@ export const HEADER_DE_MANTENIMIENTO = 'x-aoki-maintenance-token'
 export interface DependenciasDeApi {
   readonly orquestador: DependenciasDelOrquestador
   readonly simularPlc: boolean
+  /**
+   * La direccion en la que escucha la API, para poder decirlo en `/health`.
+   *
+   * Se informa porque el primer nivel de RF22 ES el bind: si esta abierto, todos
+   * los endpoints que mueven el robot quedan al alcance de cualquier interfaz de
+   * la notebook. Que eso se sepa mirando el health y no leyendo el archivo de
+   * entorno de una maquina a la que hay que entrar es la diferencia entre
+   * enterarse y no enterarse.
+   */
+  readonly httpBind: string
   /** `null` = no configurado: el comando directo a PLC queda deshabilitado. */
   readonly tokenDeMantenimiento: string | null
   /**
@@ -120,8 +131,15 @@ export function crearServidorHttp(dependencias: DependenciasDeApi): ServidorHttp
 }
 
 function construirApp(dependencias: DependenciasDeApi): express.Express {
-  const { orquestador, simularPlc, despertar, tokenDeMantenimiento, enlace, estadoDeConexion } =
-    dependencias
+  const {
+    orquestador,
+    simularPlc,
+    httpBind,
+    despertar,
+    tokenDeMantenimiento,
+    enlace,
+    estadoDeConexion,
+  } = dependencias
   const { repositorios, siteId } = orquestador
   const arrancadoEn = orquestador.reloj.ahoraMs()
 
@@ -303,6 +321,11 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         // puede reportar modo simulacion mientras el robot no se mueve.
         mode: simularPlc ? 'simulation' : 'live',
         startedAt: arrancadoEn,
+        // RF22, primer nivel. `LOOPBACK` = solo la notebook; `LAN_PRIVADA` = la
+        // red de la sucursal, que es lo que necesita la tablet; `EXPUESTO` =
+        // cualquier interfaz, y entonces la autorizacion del operario no se
+        // apoya en nada.
+        network: { bind: httpBind, scope: clasificarBind(httpBind) },
         devices: dispositivos,
         robots: estadoDeRobots,
         lastCompletedOrder:

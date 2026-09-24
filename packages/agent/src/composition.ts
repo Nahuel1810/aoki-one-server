@@ -33,6 +33,7 @@ import { crearMonitorDeConexiones } from './transport/connectionMonitor.js'
 import type { MonitorDeConexiones } from './transport/connectionMonitor.js'
 import { crearDeviceMutex } from './transport/deviceMutex.js'
 import { crearRegistroDeClientes } from './transport/modbusClient.js'
+import { advertenciaDeBind } from './exposicionDeRed.js'
 import type { RegistroDeClientes } from './transport/modbusClient.js'
 import {
   INTERVALO_DE_MONITOREO_POR_DEFECTO_MS,
@@ -356,6 +357,7 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     ? crearServidorHttp({
         orquestador,
         simularPlc: opciones.simularPlc,
+        httpBind: opciones.httpBind,
         despertar,
         tokenDeMantenimiento: opciones.tokenDeMantenimiento,
         ...(monitor === null ? {} : { estadoDeConexion: monitor.estadoDe }),
@@ -376,6 +378,20 @@ export function crearAgente(opciones: OpcionesDelAgente): Agente {
     monitor,
 
     iniciar: async () => {
+      // RF22, primer nivel: el bind ES la autorizacion del operario, asi que un
+      // bind abierto se grita al arrancar.
+      //
+      // Se avisa y se sigue: abortar dejaria al robot sin trabajar por un dato
+      // de configuracion, y eso es peor que la exposicion que se quiere evitar.
+      // Queda ademas en /health, porque nadie mira esta consola. El que decide
+      // es quien opera; lo que no puede pasar es que no se entere.
+      if (opciones.montarApi) {
+        const aviso = advertenciaDeBind(opciones.httpBind)
+        if (aviso !== null) {
+          logger.error('API_BIND_EXPUESTO', { bind: opciones.httpBind, detalle: aviso })
+        }
+      }
+
       // La zona de pickeo se siembra para cada robot dado de alta. Es idempotente:
       // un slot que ya existia conserva su estado (RF15).
       const robots = await repositorios.robots.listar(opciones.siteId)
