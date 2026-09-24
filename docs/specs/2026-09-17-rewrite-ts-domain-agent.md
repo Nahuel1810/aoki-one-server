@@ -78,7 +78,12 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
   nivel, luego distancia de módulo, luego posición.
 - **RF06** Máquina de estados de slot: `LIBRE → RESERVADO → BUSCANDO → OCUPADO → DEVOLVIENDO → LIBRE`,
   más `ERROR` para slot inutilizable. Transiciones inválidas son error del dominio, no
-  un estado silencioso.
+  un estado silencioso, y **el agente tampoco se las traga**: un rechazo termina la orden
+  en `ERROR` con el motivo. Un rechazo ignorado deja los libros diciendo una cosa y la
+  planta otra — es lo que hacía que un PUT dejara el slot figurando `OCUPADO` mientras el
+  robot se llevaba el cajón. La cadena de una devolución es
+  `RESERVAR_PARA_PUT → INICIAR_DEVOLUCION → LIBERAR`, y el primer eslabón lo emite la
+  resolución de slot: sin él la maniobra nunca llega a `DEVOLVIENDO`.
 - **RF07** Refcount de devoluciones pendientes (`pendingReturns`, hoy `logicalPickStackDepth`):
   un PICK sobre un cajón que **ya está** en un slot no genera maniobra física, incrementa
   el contador y la orden termina `DONE`. Un PUT con `pendingReturns > 1` decrementa y
@@ -96,13 +101,30 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
   en espera **sin perder su lugar** y se reactiva **por evento** al liberarse un slot de
   ese lado. La espera es FIFO por `(robot, lado)`: una orden esperando el lado izquierdo
   no bloquea a una que espera el derecho.
+  En la práctica: la orden que no puede avanzar **se saltea** en la elección de la próxima
+  y el ciclo sirve a la siguiente que sí puede. No se reencola —conserva su `creadaEn`, que
+  es su lugar— y la elegibilidad se recalcula contra el estado vivo de la zona, así que
+  vuelve sola en cuanto el slot se libera. Sin esto, la orden en espera se vuelve a elegir
+  en cada ciclo y congela la cola entera del robot: un PICK del lado izquierdo con la zona
+  izquierda llena bloquea también los PICK del derecho y todos los PUT, que son justamente
+  los que liberarían el slot que espera.
+  Un PUT cuyo `locationCode` **no es un slot de pickeo configurado** no entra en este
+  camino: no es una espera sino un pedido inválido y se rechaza con `400` en la admisión,
+  igual que el servidor actual. Un slot que no existe no aparece nunca.
 - **RF11** PUT — resolución de destino:
   - Slot **con cajón en libros** → destino = `currentBox.sourceLocationCode`; se ignora
     cualquier `targetLocation` recibido.
   - Slot **vacío en libros** (devolución manual fuera-de-libros: alguien tomó el cajón a
     mano, lo restockeó y lo apoya en un slot) → `targetLocation` es **obligatorio**;
     sin él se rechaza con `400`.
-  - Nunca se acepta una devolución cuyo destino sea el propio slot.
+  - Nunca se acepta una devolución cuyo destino sea un slot de la zona de pickeo:
+    ni el propio slot del que sale el cajón ni **ningún otro**. Si el destino de un
+    PUT es un slot, el robot deja el cajón ahí, la orden pasa a `DONE` y el slot se
+    libera: el cajón queda físicamente sobre la zona de pickeo y, en los libros, en
+    ningún lado — el inventario se rompe y el próximo PICK sobre ese slot choca con
+    un cajón que no debería estar. El destino se compara por `baseCode`, así que el
+    sufijo de acción no lo esquiva, y un destino que no parsea se rechaza en vez de
+    pasar sin verificar.
 - **RF12** Avance por confirmación, no por envío: un paso solo avanza cuando el PLC
   responde el código esperado y se verifica el reset de registros.
 - **RF13** Recuperación ante fallo de paso — invariante único: **el operario devuelve el
@@ -114,10 +136,29 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
   servidor (RF26). El agente mantiene además el mismo índice único localmente, porque
   admite órdenes manuales sin enlace (RF35) y porque una re-entrega del servidor tras un
   lease vencido no debe crear una segunda orden.
-- **RF15** Rehidratación tras reinicio: las órdenes `IN_PROGRESS` vuelven a `PENDING` y
-  se reencolan respetando su antigüedad; los slots conservan su estado persistido. Al
-  recuperar el enlace, el agente reconcilia antes de pedir trabajo nuevo: drena el outbox
-  (RF34) y re-reclama las órdenes que tenía en vuelo.
+- **RF15** Rehidratación tras reinicio: los slots conservan su estado persistido y los
+  robots quedan `IDLE` sin orden activa. Qué pasa con la orden que el corte dejó a mitad
+  de maniobra depende de **dónde podía estar el cajón**, que es lo único que decide si el
+  robot se puede mover solo:
+  - **murió antes del paso 3 (`CARRO_BUSCA`)** — o sea con `currentStepIndex ≤ 1`: el
+    carro está vacío, la orden vuelve a `PENDING` conservando su antigüedad y se replaya
+    entera desde `HOMING`, sin intervención;
+  - **murió del paso 3 en adelante**: el cajón puede estar en el carro, en el slot o en
+    el aire. La orden queda en `ERROR` con el motivo, el robot **no se mueve solo** y se
+    recupera por el retry explícito de RF13 — el operario devuelve el cajón al punto de
+    origen del paso y el replay arranca desde `HOMING`. El slot sigue tomado por esa
+    orden, así que el retry lo reusa.
+
+  **Divergencia declarada contra el servidor actual.** El legacy reanuda **a ciegas en el
+  paso muerto**, un paso que puede haberse enviado y no confirmado. Acá no se lo copia, y
+  tampoco vale "todo vuelve a `PENDING`": rehacer `HOMING` con el cajón ya en el carro
+  manda al robot a buscar un cajón que ya tiene encima. Se elige el corte por el paso 3
+  porque es el primero que toca el cajón, y para el tramo inseguro se reusa el
+  procedimiento de RF13 en vez de inventar uno paralelo: un corte de luz a mitad de
+  maniobra deja la planta en el mismo estado que un paso fallido.
+
+  Al recuperar el enlace, el agente reconcilia antes de pedir trabajo nuevo: drena el
+  outbox (RF34) y re-reclama las órdenes que tenía en vuelo.
 
 ### Transporte Modbus (`packages/agent`)
 
@@ -133,6 +174,47 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
   Modbus de aplicación y los errores de programación fallan rápido.
 - **RF20** Modo simulación (`SIMULATE_PLC`) para operar sin PLC. **Default `false`**:
   arrancar sin configuración no debe simular en silencio.
+
+**Cableado del transporte y desvíos declarados (auditoría de paridad).** El monitor de
+RF18 estaba implementado y testeado y **no lo instanciaba nadie**: el único `conectar()`
+del paquete vivía dentro suyo, así que en planta nadie abría el socket, toda orden moría
+en `Port Not Open` y la pantalla de dispositivos decía `DISCONNECTED` para siempre. Queda
+así:
+
+- El monitor se instancia en `composition.ts`, arranca **antes** del bucle del robot, corre
+  cada 1000 ms (`CONNECTION_CHECK_INTERVAL_MS` del legacy), cede el socket mientras el
+  orquestador ejecuta una orden de ese robot (el `isRobotProcessing` del legacy, acá el
+  conjunto de robots en ciclo) y para en `detener()`. Backoff 2000 ms → 30000 ms y
+  recreación de cliente cada 5 fallos consecutivos, que son los defaults del legacy.
+- El puerto de transporte y el monitor comparten **un solo registro de clientes**: un
+  dispositivo, un socket. Antes el puerto tenía su propio `Map` y el monitor otro.
+- Se porta el reintento interno de transporte de `_runModbusOpInner`: se asegura la conexión
+  antes de **cada** operación Modbus (`ensureConnected`) y ante error de conectividad se
+  reintenta 3 veces con 2000 ms, se recrea el cliente y se vuelve a empezar, hasta 10 rondas.
+  Es lo que hace que un corte de red de diez segundos no mande la orden a `ERROR`.
+- El `status` y el `lastSeen` por dispositivo de `GET /api/devices`, `GET /api/devices/robots`
+  y `/health` salen del monitor. Era una constante derivada de `simularPlc`, y ese estado es
+  el único indicador con el que el operario distingue "cable desenchufado" de "PLC trabado"
+  de "todo bien pero la orden falló".
+
+Desvíos respecto del legacy, deliberados:
+
+1. **No se porta el escalón automático de hard-reset** (`MODBUS_HARD_RESET_AFTER_RECREATES_PER_DEVICE`,
+   su cooldown y `MODBUS_HARD_RESET_EXIT_PROCESS`), ni la racha acumulada de recreaciones por
+   dispositivo entre operaciones. `hardReset()` existe y se invoca desde afuera. Motivo: ningún
+   test portado ejercita el disparo automático, y un `process.exit(1)` decidido desde el
+   transporte no entra sin un test que lo fije. Entra con la task que lo escriba.
+2. **Al agotar las rondas se relanza el error de conectividad original**, no el `Error` con el
+   resumen ("fallida tras N rondas") que arma el legacy. En el rewrite la clasificación de RF19
+   se decide por el código o la frase del error: un `Error` nuevo sin ninguno de los dos caería
+   en `PROGRAMACION` y convertiría un cable desenchufado en un bug nuestro.
+3. **El ciclo del monitor tiene guarda de reentrada.** El legacy usa `setInterval` pelado, así
+   que contra un PLC trabado —donde cada ciclo se come el timeout de socket entero— apila
+   ticks encimados sobre el mismo dispositivo.
+4. **Mientras el monitor no completó su primer ciclo**, la API contesta lo de antes: `CONNECTED`
+   en simulación (que es lo que el propio monitor contesta en ese modo) y `DISCONNECTED` en
+   vivo, que es el estado con el que el `DeviceRegistry` del legacy da de alta un dispositivo.
+   Decir `CONNECTED` sin haber hablado con el PLC sería peor que decir que no se sabe.
 
 ### API local y persistencia (`packages/agent`)
 
@@ -165,6 +247,66 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
 - **RF25** `/health` informa estado real: conectividad por dispositivo, profundidad de
   cola por robot, última orden completada, timestamp de arranque y **estado del enlace con
   el servidor** (conectado / degradado, último contacto, tamaño del outbox).
+
+**Salidas del operario y presupuestos de tiempo — desvíos declarados (auditoría de paridad).**
+Seis diferencias contra el legacy que no estaban declaradas y se cerraron. Las tres primeras
+vuelven al comportamiento del legacy; las otras tres se apartan a propósito y el motivo queda
+acá.
+
+- **El operario tiene salida sobre un slot.** `POST /api/slots/:code/release` libera desde
+  **cualquier** estado, como `StateManager.releaseSlot` del legacy. La máquina de estados de
+  RF06 suma el evento `LIBERAR_MANUAL` (total: cualquier estado → `LIBRE`), separado de
+  `LIBERAR`, que sigue siendo el cierre de la maniobra y sigue rechazando desde `BUSCANDO`.
+  Sin esta salida, un PICK que falla de una forma que el retry no arregla —cajón trabado, PLC
+  en falla— dejaba el slot en `RESERVADO` o `BUSCANDO` para siempre: cada fallo de ésos se
+  comía uno de los doce slots de la zona y la única corrección era editar SQLite a mano. La
+  cancelación deja de ser un callejón sin salida por la misma vía: liberado el slot, la orden
+  que lo retenía ya se puede cancelar, y el mensaje de `ORDEN_CON_SLOT_TOMADO` nombra las dos
+  salidas (retry y liberación manual).
+  **Guarda que el legacy no tiene:** no se libera el slot de una orden `IN_PROGRESS` (409 con
+  el id del pedido). Ese ciclo está adentro del handshake con el PLC y no vuelve a mirar el
+  slot hasta terminar el paso, así que liberarlo deja el cajón a mitad de camino y los libros
+  diciendo que el slot está vacío. La liberación queda registrada como `SLOT_RELEASED_MANUAL`
+  con el estado del que salió y la orden que lo retenía.
+- **Los presupuestos de tiempo son los que corren hoy en planta.** Se portan de `.env.example`,
+  que es lo que documenta la configuración de la sucursal: ack 150 ms × 600 intentos y **reset
+  150 ms × 600 intentos** (~90 s cada uno), y reintentos por paso `3` con backoff base **200 ms**.
+  El presupuesto de reset había quedado en 40 intentos (6 s) y el backoff base en 2000 ms. El
+  del reset es el que duele: cuando se agota, el paso físico **ya se ejecutó bien** —el PLC
+  confirmó 100 y el cajón se movió— y la orden cae igual en `ERROR` por `RESET_INCOMPLETO`,
+  con RF13 pidiéndole al operario que devuelva el cajón al punto de origen de un paso que no
+  falló. Los cuatro números quedan pineados contra `.env.example` por test.
+- **El comando directo a PLC vuelve a leer `expectedResponses` del body** (y su forma singular
+  `expectedResponse`), como `devicesRoutes.js`. Sin eso, mover el ELEVADOR a mano —que contesta
+  `2##`, el nivel, y nunca `100`— se comía los 90 s del presupuesto de ack y terminaba en 502.
+  Además, **ante un fallo se resetea `messageIn`** del dispositivo que se tocó: el comando ya
+  se escribió, y dejarlo puesto hace que el próximo paso real arranque con un comando colgado.
+  *Desvío:* el default sigue siendo `[100, '1##']` y no el `[100]` del legacy, para que un
+  error del PLC se informe apenas llega en vez de agotar el presupuesto esperando un `100` que
+  ya no va a venir; el body recupera el control exacto cuando hace falta.
+- **`POST /api/orders` acepta de nuevo el campo `id` del body**, que es por donde dedupea el
+  front actual: entero (se rechaza lo que no lo sea con 400, como el legacy) y normalizado a
+  texto contra `external_order_id`. Un reenvío del mismo `id` devuelve la orden existente con
+  `200` y `created: false`. No colisiona con el `externalOrderId` local de RF35, que va
+  prefijado (`local-<agente>-<uuid>`) y nunca es sólo dígitos. Sin esto, cada toque del botón
+  creaba una orden nueva y un doble tap sobre un PUT eran **dos maniobras**, la segunda a
+  buscar un cajón que ya no estaba.
+- ***Desvío:* la pausa de cola SOBREVIVE al reinicio del proceso.** El legacy la perdía
+  (`QueueManager` la guarda en memoria y nadie llama a `restoreRobotQueue`). Se conserva
+  persistida porque la pausa se aprieta por algo físico —un cajón trabado, alguien trabajando
+  sobre la estantería— y olvidarla al reiniciar pone el robot en marcha solo: entre las dos
+  formas de equivocarse, ésta es la que no mueve fierro. Lo que no puede pasar es que quede
+  pausado en silencio, así que el arranque emite `QUEUE_PAUSED_AT_STARTUP` (WARN) por cada
+  robot pausado y `/health` informa `paused` por robot (RF25).
+- **El mapa de registros vuelve a ser configurable por dispositivo.** `registerMap`
+  (`messageIn` / `messageOut`) entra por `POST /api/devices/register`, se persiste en
+  `devices.register_map_json` y es el que usa el handshake; lo que no se declara lo completa
+  el default `0/0`, que es `mergeRegisterMaps` del legacy. La validación de alta que se había
+  perdido con `src/config/deviceRegisterMaps.js` vuelve y se endurece: las direcciones tienen
+  que ser enteros ≥ 0. Cableado en 0, un dispositivo de planta que usa otra dirección **no
+  falla**: le escribe el comando a otro registro del PLC. La columna se agrega con una
+  migración idempotente, porque `CREATE TABLE IF NOT EXISTS` no la agregaría a la base que ya
+  existe en la sucursal.
 
 ### Servidor de pedidos (`packages/server`)
 
@@ -341,12 +483,18 @@ Al agotarse, la orden va a `ERROR` con causa explícita en vez de quedar colgada
 | `siteId` | Se valida en el servidor contra la credencial. El agente lo lleva en su modelo y lo toma de su configuración, no del request de la tablet. |
 | `GET /api/slots` | Agrega `side` (`LEFT`/`RIGHT`) y `robotId` por slot, que el front nuevo ya consume. |
 | `targetLocation` en PUT | Obligatorio **solo** si el slot está vacío en libros; ignorado si el slot tiene cajón. Antes: opcional y, si faltaba, devolvía el cajón al mismo slot. |
+| Destino de un PUT dentro de la zona de pickeo | **Se rechaza**, venga del pedido o del cajón en libros. El servidor actual **commiteado no tiene ninguna protección**: hace `target \|\| source` y sin `targetLocation` devuelve el cajón al propio slot del que salió. Existe un `assertReturnTargetIsStorage` que prohíbe el propio slot, pero vive en trabajo **sin commitear** y no está en ninguna rama, así que no es la línea de base contra la que se compara. Acá la prohibición cubre **cualquier** slot de la zona: el daño no depende de cuál sea —cajón apoyado en pickeo y fuera de los libros— y limitarlo al propio dejaba abierto devolver a un slot vecino. |
 | `priority` | Se elimina del modelo. Lo reemplaza la regla PICK-antes-que-PUT de RF09. |
 | `HTTP_PORT` / `HTTP_BIND` | Se respeta la variable de entorno (hoy `3000` está hardcodeado) y se agrega la interfaz de escucha, que por defecto **no** es `0.0.0.0`. |
 | `/health` | Pasa a health profundo (RF25). |
 | `/api/devices/robots` | Se corrige: hoy devuelve `{}` en `queue` con driver externo (Promise sin `await`). |
 | `/api/orders/simulate` | Deja de exponer campos que nunca se calculan (`address`, `responseAddress`, `verifyAddress`, `expectedValue`). |
 | `SIMULATE_PLC` | Default pasa a `false`. |
+| `POST /api/slots/:code/release` | Libera desde cualquier estado (como el legacy) y agrega la guarda que el legacy no tiene: 409 si la orden que retiene el slot está `IN_PROGRESS`. Devuelve `previousStatus`. |
+| `POST /api/orders` | Vuelve a aceptar `id` (entero) como clave de dedupe del front, además de `externalOrderId`. Reenvío → `200` con `created: false`. |
+| `POST /api/devices/:robotId/:type/command` | Vuelve a aceptar `expectedResponses` / `expectedResponse` del body. Ante un fallo resetea `messageIn` del dispositivo. Default `[100, '1##']` (el legacy usa `[100]`). |
+| `POST /api/devices/register` | Vuelve a aceptar `registerMap` (`messageIn` / `messageOut`), con validación de enteros ≥ 0, y lo devuelve resuelto en el 201. |
+| Pausa de cola | **Sobrevive al reinicio** (el legacy la perdía). `/health` informa `paused` por robot y el arranque emite `QUEUE_PAUSED_AT_STARTUP`. |
 
 Se mantienen las rutas y el contrato de respuesta `{ ok, data }` / `{ ok, error }` para
 no romper el front.
@@ -424,6 +572,8 @@ hay en cada slot), devolver un cajón, destrabar una orden en error.
 - [x] **T13** `agent`: `ModbusClient` + `DeviceMutex` + clasificación de errores de conectividad (RF16, RF19).
 - [x] **T14** `agent`: handshake de paso con verificación de reset (RF12, RF17).
 - [x] **T15** `agent`: monitor de conectividad con backoff, recreación y cesión de socket (RF18).
+      Cableado en `composition.ts` y reintento interno de transporte portado; los desvíos están
+      declarados arriba, junto a RF20.
 - [x] **T16** `agent`: orquestador — loop por robot, retry, deadlines por paso y orden (RF13).
 - [x] **T17** `agent`: resolución de destino de PUT y devolución manual fuera-de-libros (RF11).
 - [x] **T18** `agent`: dedupe idempotente por `(siteId, externalOrderId)` (RF14) y rehidratación (RF15).

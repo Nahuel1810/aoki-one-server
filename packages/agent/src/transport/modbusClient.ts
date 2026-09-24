@@ -13,6 +13,8 @@
 
 import type { TipoDispositivo } from '@aoki-one/domain'
 
+import type { MapaDeRegistros } from './stepHandshake.js'
+
 /**
  * Identidad de un dispositivo: `<robotId>:<TIPO>` (por ejemplo `3:CARRO`).
  *
@@ -34,6 +36,21 @@ export interface DispositivoRegistrado {
   /** `unitId` del esclavo Modbus. Los Festo de planta no usan 1. */
   readonly unitId: number
   readonly timeoutMsDeSocket: number
+  /**
+   * En que direcciones vive este dispositivo. Ausente = el mapa por defecto
+   * (`MAPA_DE_REGISTROS_POR_DEFECTO`, o sea 0 y 0).
+   *
+   * Es configurable POR DISPOSITIVO porque en planta no todos los PLC usan el
+   * registro 0, que es justamente para lo que existia la tabla del legacy
+   * (`src/config/deviceRegisterMaps.js` + `registerMap` del alta). Cableado en
+   * 0, un dispositivo que usa otra direccion no falla: el agente le escribe el
+   * comando a OTRO registro del PLC, que es peor que no escribirlo.
+   *
+   * Es opcional y no requerido a proposito: un dispositivo sin mapa propio es el
+   * caso normal, y obligar a repetir `{ messageIn: 0, messageOut: 0 }` en cada
+   * alta y cada fixture convierte el default en ruido copiado a mano.
+   */
+  readonly mapaDeRegistros?: MapaDeRegistros
 }
 
 /** Puerto del cliente Modbus TCP de UN dispositivo. */
@@ -41,6 +58,17 @@ export interface ModbusClient {
   readonly conectar: () => Promise<void>
   readonly desconectar: () => Promise<void>
   readonly estaConectado: () => boolean
+  /**
+   * Baja la bandera de conectado SIN cerrar el socket.
+   *
+   * Portado de `ModbusClient.markDisconnected` del legacy. Tras un error de
+   * conectividad la bandera tiene que quedar en false para que el proximo
+   * `conectar()` rehaga el connectTCP en vez de darse por conectado sobre un
+   * socket muerto y repetir el mismo fallo. NO se cierra el socket a proposito:
+   * `close()` sobre un socket ya roto puede no llamar nunca a su callback y
+   * dejar colgado al reintento, que es lo contrario de lo que se busca.
+   */
+  readonly marcarDesconectado: () => void
   /** FC03. Es por donde se relee `messageIn`. */
   readonly leerRegistrosDeRetencion: (direccion: number, cantidad: number) => Promise<readonly number[]>
   /** FC04. Es por donde se lee `messageOut`. */
@@ -90,6 +118,9 @@ export function crearModbusClient(dispositivo: DispositivoRegistrado): ModbusCli
       }
     },
     estaConectado: () => conectado,
+    marcarDesconectado: () => {
+      conectado = false
+    },
     leerRegistrosDeRetencion: async (direccion, cantidad) => {
       const c = await asegurarCliente()
       const respuesta = await c.readHoldingRegisters(direccion, cantidad)
@@ -141,6 +172,23 @@ export interface RegistroDeClientes {
   readonly cerrarTodos: () => Promise<void>
 }
 
+/**
+ * Cierra un cliente sin propagar el fallo, como hace el legacy al recrear
+ * ("failed to disconnect stale client": lo loguea y sigue).
+ *
+ * Se descarta el error a proposito: cerrar un socket que ya esta roto falla
+ * seguido, y si eso se propagara, el fallo al despedirse del socket muerto
+ * cancelaria justo la recreacion que venia a reemplazarlo, o el apagado del
+ * agente.
+ */
+async function despedirse(cliente: ModbusClient): Promise<void> {
+  try {
+    await cliente.desconectar()
+  } catch {
+    // El cliente se descarta igual: no hay nada que reintentar sobre el.
+  }
+}
+
 export function crearRegistroDeClientes(): RegistroDeClientes {
   const clientes = new Map<ClaveDeDispositivo, ModbusClient>()
 
@@ -160,7 +208,7 @@ export function crearRegistroDeClientes(): RegistroDeClientes {
       const clave = claveDeDispositivo(dispositivo.robotId, dispositivo.tipo)
       const anterior = clientes.get(clave)
       if (anterior !== undefined) {
-        await anterior.desconectar()
+        await despedirse(anterior)
       }
       const creado = crearModbusClient(dispositivo)
       clientes.set(clave, creado)
@@ -168,7 +216,7 @@ export function crearRegistroDeClientes(): RegistroDeClientes {
     },
     cerrarTodos: async () => {
       for (const cliente of clientes.values()) {
-        await cliente.desconectar()
+        await despedirse(cliente)
       }
       clientes.clear()
     },

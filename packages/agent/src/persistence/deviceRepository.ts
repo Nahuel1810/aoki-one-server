@@ -20,6 +20,8 @@
 import type { TipoDispositivo } from '@aoki-one/domain'
 
 import type { DispositivoRegistrado } from '../transport/modbusClient.js'
+import { MAPA_DE_REGISTROS_POR_DEFECTO } from '../transport/stepHandshake.js'
+import type { MapaDeRegistros } from '../transport/stepHandshake.js'
 import type { BaseDelAgente } from './database.js'
 
 export interface DeviceRepository {
@@ -48,25 +50,42 @@ export function crearDeviceRepository(base: BaseDelAgente): DeviceRepository {
       puerto: fila.puerto,
       unitId: fila.unit_id,
       timeoutMsDeSocket: fila.timeout_ms_socket,
+      mapaDeRegistros: leerMapaDeRegistros(fila.register_map_json),
     }
   }
 
   return {
     registrar: (dispositivo) => {
+      const mapaDeRegistros = dispositivo.mapaDeRegistros ?? MAPA_DE_REGISTROS_POR_DEFECTO
       // La clave es (robotId, tipo): volver a registrar el mismo par actualiza la
       // fila en vez de crear una segunda.
       sql
         .prepare(
-          `INSERT INTO devices (robot_id, tipo, host, puerto, unit_id, timeout_ms_socket)
-           VALUES (@robotId, @tipo, @host, @puerto, @unitId, @timeoutMsDeSocket)
+          `INSERT INTO devices (robot_id, tipo, host, puerto, unit_id, timeout_ms_socket, register_map_json)
+           VALUES (@robotId, @tipo, @host, @puerto, @unitId, @timeoutMsDeSocket, @registerMapJson)
            ON CONFLICT(robot_id, tipo) DO UPDATE SET
              host = excluded.host,
              puerto = excluded.puerto,
              unit_id = excluded.unit_id,
-             timeout_ms_socket = excluded.timeout_ms_socket`,
+             timeout_ms_socket = excluded.timeout_ms_socket,
+             register_map_json = excluded.register_map_json`,
         )
-        .run({ ...dispositivo })
-      return Promise.resolve(dispositivo)
+        .run({
+          // Se enumeran los campos en vez de esparcir el dispositivo: el mapa de
+          // registros se persiste como JSON y una clave de mas en el objeto de
+          // bind hace fallar a better-sqlite3.
+          robotId: dispositivo.robotId,
+          tipo: dispositivo.tipo,
+          host: dispositivo.host,
+          puerto: dispositivo.puerto,
+          unitId: dispositivo.unitId,
+          timeoutMsDeSocket: dispositivo.timeoutMsDeSocket,
+          registerMapJson: JSON.stringify(mapaDeRegistros),
+        })
+      // Se devuelve con el mapa ya RESUELTO: quien da de alta sin mapa propio
+      // tiene que poder ver cual le quedo, que es lo que el legacy contesta en el
+      // 201 (`registerMap` mergeado).
+      return Promise.resolve({ ...dispositivo, mapaDeRegistros })
     },
 
     buscar: (robotId, tipo) => {
@@ -93,4 +112,40 @@ interface FilaDeDispositivo {
   readonly puerto: number
   readonly unit_id: number
   readonly timeout_ms_socket: number
+  /** `null` en las filas que se dieron de alta antes de que la columna existiera. */
+  readonly register_map_json: string | null
+}
+
+/**
+ * El mapa persistido, mergeado sobre el por defecto.
+ *
+ * Es `mergeRegisterMaps` del legacy: lo que la fila no diga lo pone el default,
+ * asi que una fila vieja —o una escrita a mano a medias— no deja al handshake
+ * sin direccion. Un JSON roto tampoco puede tumbar el arranque del agente: se
+ * cae al default, que es la direccion con la que ya venia operando.
+ */
+function leerMapaDeRegistros(json: string | null): MapaDeRegistros {
+  if (json === null) {
+    return MAPA_DE_REGISTROS_POR_DEFECTO
+  }
+  let crudo: unknown
+  try {
+    crudo = JSON.parse(json)
+  } catch {
+    return MAPA_DE_REGISTROS_POR_DEFECTO
+  }
+  if (typeof crudo !== 'object' || crudo === null) {
+    return MAPA_DE_REGISTROS_POR_DEFECTO
+  }
+  const parcial = crudo as { readonly messageIn?: unknown; readonly messageOut?: unknown }
+  return {
+    messageIn:
+      typeof parcial.messageIn === 'number'
+        ? parcial.messageIn
+        : MAPA_DE_REGISTROS_POR_DEFECTO.messageIn,
+    messageOut:
+      typeof parcial.messageOut === 'number'
+        ? parcial.messageOut
+        : MAPA_DE_REGISTROS_POR_DEFECTO.messageOut,
+  }
 }

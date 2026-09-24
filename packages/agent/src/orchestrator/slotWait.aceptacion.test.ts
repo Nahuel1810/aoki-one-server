@@ -295,4 +295,57 @@ describe('resolucion del slot de una orden (portado de orchestrator.test.js)', (
     // El slot ocupado por otro cajon queda como estaba.
     expect(doble.slots.get('3X02AE1')?.estado).toEqual(OCUPADO_POR_OTRO)
   })
+
+  // DIVERGENCIA CORREGIDA. Un PUT sobre un locationCode que no es slot de pickeo
+  // se trataba como espera: la orden quedaba PENDING para siempre —el slot no va
+  // a aparecer nunca— y arrastraba a la cola del robot. El legacy lo rechazaba al
+  // crear la orden y aca queda la red por si la zona cambia despues de admitida:
+  // un slot que NO EXISTE no es un estado transitorio.
+  it('un PUT sobre un slot que no existe en la zona es un error, no una espera', async () => {
+    const doble = crearDoble([slotDePickeo('3X02AE1', LIBRE)])
+    const putFueraDeZona: Orden = {
+      ...ORDEN_PICK,
+      id: 'o-1',
+      tipo: 'PUT',
+      // Gramatica valida, pero no es ninguno de los slots configurados.
+      locationCode: '3X02AE9',
+      targetLocation: '3X04AA3',
+    }
+
+    const resolucion = await resolverSlotDeOrden(dependencias(doble.repositorios), putFueraDeZona)
+
+    expect(resolucion).toEqual({
+      ok: false,
+      error: {
+        codigo: 'SLOT_DE_PUT_INEXISTENTE',
+        causa: { codigo: 'SLOT_INEXISTENTE', locationCode: '3X02AE9' },
+      },
+    })
+    // Nada quedo marcado como en espera: la orden no espera, falla.
+    expect(doble.ordenes.get('o-1')?.waitingForSlot).toBe(false)
+  })
+
+  it('un PUT sobre un slot con cajon en libros lo deja RESERVADO para esa orden', async () => {
+    const doble = crearDoble([slotDePickeo('3X02AE1', OCUPADO_POR_OTRO)])
+    const put: Orden = { ...ORDEN_PICK, tipo: 'PUT', locationCode: '3X02AE1' }
+
+    const resolucion = exigirOk(await resolverSlotDeOrden(dependencias(doble.repositorios), put))
+
+    // RF11: el destino sale del cajon en libros, no del pedido.
+    expect(resolucion).toEqual({
+      tipo: 'SLOT_ASIGNADO',
+      slotLocationCode: '3X02AE1',
+      targetLocation: '8X04AE1',
+    })
+    // El primer eslabon de la cadena de RF06 para una devolucion, que antes no
+    // emitia nadie: el slot queda RESERVADO y CONSERVA el cajon.
+    expect(doble.slots.get('3X02AE1')?.estado).toEqual({
+      estado: 'RESERVADO',
+      ordenId: 'o-1',
+      contenido: {
+        cajon: { id: 'existing', ubicacionDeOrigen: '8X04AE1' },
+        pendingReturns: 1,
+      },
+    })
+  })
 })

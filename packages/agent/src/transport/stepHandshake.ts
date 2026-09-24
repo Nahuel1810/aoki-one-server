@@ -48,6 +48,17 @@ export interface MapaDeRegistros {
   readonly messageOut: number
 }
 
+/**
+ * El mapa con el que se da de alta un dispositivo que no declara el suyo.
+ *
+ * Es `DEFAULT_DEVICE_REGISTER_MAPS` del legacy (`src/config/deviceRegisterMaps.js`),
+ * que pone a CARRO y ELEVADOR en 0 y 0. El valor por defecto es el mismo para
+ * los dos tipos, asi que aca es una constante y no una tabla por tipo: una tabla
+ * de dos filas identicas insinua una diferencia que no existe. Lo que si existe
+ * es el mapa POR DISPOSITIVO, que se configura en el alta y se persiste.
+ */
+export const MAPA_DE_REGISTROS_POR_DEFECTO: MapaDeRegistros = { messageIn: 0, messageOut: 0 }
+
 /** Tiempos del polling. Se inyectan: en los tests no se duerme de verdad. */
 export interface TiemposDeHandshake {
   readonly intervaloAckMs: number

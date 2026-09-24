@@ -4,10 +4,12 @@
 // pedido quede sin atender. Un PICK sobre un cajon que YA esta en un slot no
 // genera maniobra: incrementa el contador y la orden termina DONE.
 //
-// La mitad de abajo de RF07 (un PUT con el contador en mas de 1 decrementa y
-// termina DONE sin maniobra, solo el ultimo PUT devuelve fisicamente) NO se
-// declara aca: figura en la seccion "RF sin cobertura" del mapeo, ningun test
-// portado la ejercita y entra con la task que escriba su test.
+// La mitad de abajo de RF07 —un PUT con el contador en mas de 1 decrementa y
+// termina DONE sin maniobra; solo el ULTIMO PUT devuelve fisicamente— vive en
+// `resolverPut`. Estuvo sin declarar mientras ningun test portado la ejercitaba,
+// y esa ausencia era una divergencia contra el robot de hoy
+// (`OrchestratorService.js:248-253`): sin ella el primer PUT devuelve el cajon y
+// libera el slot mientras un segundo pedido todavia lo esta esperando.
 
 import type { Result } from './result.js'
 import type { CajonEnSlot } from './slotStateMachine.js'
@@ -70,4 +72,34 @@ export function resolverPick(
     return incrementado
   }
   return { ok: true, valor: { tipo: 'TERMINAR_SIN_MANIOBRA', pendingReturns: incrementado.valor } }
+}
+
+/**
+ * Resuelve un PUT (segunda mitad de RF07).
+ *
+ * `contenidoDelSlot` es lo que el slot de pickeo tiene apoyado en libros.
+ *
+ * Con el contador en mas de 1 hay OTRO pedido que todavia reclama ese mismo
+ * cajon: se decrementa, la orden termina DONE y el cajon NO se mueve. Solo
+ * cuando el contador esta en 1 —el ultimo pedido pendiente— se ejecuta la
+ * devolucion fisica.
+ *
+ * Es el reflejo exacto de `resolverPick`: sin esta mitad, el primer PUT devuelve
+ * el cajon a su ubicacion de guardado y libera el slot mientras el segundo
+ * pedido lo sigue esperando, que es justo el caso que el refcount existe para
+ * evitar.
+ */
+export function resolverPut(
+  contenidoDelSlot: CajonEnSlot,
+): Result<ResolucionDeManiobra, ErrorPendingReturns> {
+  if (contenidoDelSlot.pendingReturns <= 1) {
+    // Ultima devolucion pendiente: esta si mueve el robot.
+    return { ok: true, valor: { tipo: 'EJECUTAR_MANIOBRA' } }
+  }
+
+  const decrementado = decrementarPendingReturns(contenidoDelSlot.pendingReturns)
+  if (!decrementado.ok) {
+    return decrementado
+  }
+  return { ok: true, valor: { tipo: 'TERMINAR_SIN_MANIOBRA', pendingReturns: decrementado.valor } }
 }

@@ -49,6 +49,10 @@ const ESQUEMA = `
     pausada_en  INTEGER NOT NULL
   );
 
+  -- register_map_json: en que direcciones Modbus vive ESTE dispositivo. NULL =
+  -- el mapa por defecto (0 y 0). Es configuracion de planta: no todos los PLC
+  -- usan el registro 0, y cableado en 0 el agente no falla, le escribe el
+  -- comando a otro registro del PLC.
   CREATE TABLE IF NOT EXISTS devices (
     robot_id            TEXT NOT NULL,
     tipo                TEXT NOT NULL,
@@ -56,6 +60,7 @@ const ESQUEMA = `
     puerto              INTEGER NOT NULL,
     unit_id             INTEGER NOT NULL,
     timeout_ms_socket   INTEGER NOT NULL,
+    register_map_json   TEXT,
     PRIMARY KEY (robot_id, tipo)
   );
 
@@ -190,9 +195,38 @@ const ESQUEMA = `
   );
 `
 
+/**
+ * Columnas que se agregaron DESPUES de que existiera la base de la sucursal.
+ *
+ * `CREATE TABLE IF NOT EXISTS` no las agrega a una tabla que ya existe, asi que
+ * una columna nueva no llegaria nunca a la notebook que ya esta operando: la
+ * lectura devolveria `undefined` y el dispositivo perderia su mapa. Se aplican a
+ * mano, consultando el esquema real, porque SQLite no tiene
+ * `ADD COLUMN IF NOT EXISTS`.
+ */
+const COLUMNAS_AGREGADAS: readonly {
+  readonly tabla: string
+  readonly columna: string
+  readonly definicion: string
+}[] = [{ tabla: 'devices', columna: 'register_map_json', definicion: 'TEXT' }]
+
+function agregarColumnasFaltantes(sql: Database.Database): void {
+  for (const { tabla, columna, definicion } of COLUMNAS_AGREGADAS) {
+    // PRAGMA no acepta parametros ligados; el nombre de tabla es una constante
+    // de este modulo y nunca entrada del usuario.
+    const columnas = sql.prepare(`PRAGMA table_info(${tabla})`).all() as {
+      readonly name: string
+    }[]
+    if (!columnas.some((fila) => fila.name === columna)) {
+      sql.exec(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`)
+    }
+  }
+}
+
 export function abrirBase(ruta: string): BaseDelAgente {
   const sql = new Database(ruta)
   sql.exec(ESQUEMA)
+  agregarColumnasFaltantes(sql)
   return {
     sql,
     cerrar: () => {

@@ -254,6 +254,7 @@ describe('rehidratacion tras reinicio (portado de orchestrator.test.js)', () => 
     const resumen = await rehidratar(dependencias(doble.repositorios))
 
     expect(resumen.ordenesRecuperadasDeEnCurso).toEqual(['o-running'])
+    expect(resumen.ordenesDetenidasParaRevision).toEqual([])
     // De la mas vieja a la mas nueva: la que estaba en curso entro segunda en la
     // tabla pero es la mas antigua, asi que va primero.
     expect(resumen.ordenesPendientes).toEqual(['o-running', 'o-pending'])
@@ -270,5 +271,56 @@ describe('rehidratacion tras reinicio (portado de orchestrator.test.js)', () => 
     // RF15: los slots conservan su estado persistido, con el cajon apoyado.
     const slots = await doble.repositorios.slots.listarPorRobot('1')
     expect(slots.at(0)?.estado).toEqual(CAJON_APOYADO)
+  })
+
+  // DIVERGENCIA DECLARADA. Ni el legacy ni la version anterior de esta funcion
+  // eran seguras: el legacy reanudaba a ciegas en el paso muerto y esta reanudaba
+  // TODA orden interrumpida desde HOMING. Lo segundo, con el cajon ya en el
+  // carro, manda al robot a hacer un homing con el cajon encima y despues a
+  // buscar un cajon que ya tiene. El corte esta en el paso 3 (CARRO_BUSCA), el
+  // primero que toca el cajon.
+  it('deja en ERROR, y no reanuda, la que murio con el cajon posiblemente en el carro', async () => {
+    const doble = crearDoble(
+      [
+        orden({
+          id: 'o-con-cajon',
+          estado: 'IN_PROGRESS',
+          creadaEn: 1_000,
+          iniciadaEn: 1_500,
+          // Paso 2 confirmado: el 3 estaba en vuelo.
+          currentStepIndex: 2,
+          slotLocationCode: '3X02AE1',
+        }),
+      ],
+      [
+        {
+          id: '1',
+          siteId: SITE_ID,
+          estanteriaCode: '3X',
+          habilitado: true,
+          estado: 'BUSY',
+          ordenActivaId: 'o-con-cajon',
+        },
+      ],
+    )
+
+    const resumen = await rehidratar(dependencias(doble.repositorios))
+
+    expect(resumen.ordenesDetenidasParaRevision).toEqual(['o-con-cajon'])
+    expect(resumen.ordenesRecuperadasDeEnCurso).toEqual([])
+    // No vuelve a la cola: nadie la va a tomar hasta el retry del operario.
+    expect(resumen.ordenesPendientes).toEqual([])
+
+    const detenida = doble.ordenes.get('o-con-cajon')
+    expect(detenida?.estado).toBe('ERROR')
+    expect(detenida?.errorReason).toContain('interrumpida por un reinicio')
+    // El indice de paso NO se pisa: es el dato con el que el operario sabe hasta
+    // donde llego la maniobra y a donde devolver el cajon (RF13).
+    expect(detenida?.currentStepIndex).toBe(2)
+    // El slot sigue tomado por ella, asi que el retry lo reusa y no se pierde.
+    expect(detenida?.slotLocationCode).toBe('3X02AE1')
+
+    // El robot se libera igual: una orden detenida no lo puede dejar tomado.
+    expect(doble.robots.get('1')?.ordenActivaId).toBeNull()
   })
 })

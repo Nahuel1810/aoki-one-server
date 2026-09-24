@@ -117,7 +117,22 @@ export function rankearSlotsParaPick(
       return a.ubicacion.modulo - b.ubicacion.modulo
     }
 
-    return a.ubicacion.posicion - b.ubicacion.posicion
+    if (a.ubicacion.posicion !== b.ubicacion.posicion) {
+      return a.ubicacion.posicion - b.ubicacion.posicion
+    }
+
+    // Criterio 6, portado literal del legacy (`comparePickSlotCandidates` cierra
+    // con `a.normalizedLocationCode.localeCompare(b.normalizedLocationCode)`).
+    //
+    // No es decorativo: dos slots del MISMO modulo y la MISMA posicion pueden
+    // empatar en todo lo anterior cuando estan a la misma distancia de nivel a
+    // uno y otro lado del origen (origen en F, candidatos en E y en G). Sin este
+    // desempate el sort estable devuelve el que vino primero en el arreglo, o
+    // sea el orden de filas que devolvio SQLite: la misma zona de pickeo y el
+    // mismo pedido pueden elegir distinto slot entre dos corridas. El baseCode
+    // ascendente elige siempre el nivel mas bajo, que es ademas el que deja el
+    // elevador mas cerca del piso.
+    return a.locationCode.localeCompare(b.locationCode)
   })
 
   return { ok: true, valor: ordenados }

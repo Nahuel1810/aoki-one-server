@@ -36,8 +36,17 @@ export interface PuertoDeTransporte {
     dispositivo: TipoDispositivo,
     pedido: PedidoDeComando,
   ) => Promise<Result<RespuestaUtilPlc, FalloDeEjecucion>>
-  /** Deja `messageIn` en 0 en los dispositivos del robot antes de reencolar (RF13). */
-  readonly resetearMessageIn: (robotId: string) => Promise<Result<void, FalloDeEjecucion>>
+  /**
+   * Deja `messageIn` en 0 en los dispositivos del robot antes de reencolar (RF13).
+   *
+   * Con `dispositivo` limpia SOLO ese. Lo usa el comando directo a PLC, que
+   * escribio un registro de un unico dispositivo y tiene que dejarlo limpio sin
+   * pisarle el registro al otro.
+   */
+  readonly resetearMessageIn: (
+    robotId: string,
+    dispositivo?: TipoDispositivo,
+  ) => Promise<Result<void, FalloDeEjecucion>>
   readonly leerRegistros: (
     robotId: string,
     dispositivo: TipoDispositivo,

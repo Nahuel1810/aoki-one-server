@@ -9,10 +9,12 @@ import type { Result, TipoDispositivo } from '@aoki-one/domain'
 
 import type { DeviceMutex } from './deviceMutex.js'
 import type { FalloDeEjecucion } from './errorClassification.js'
-import { claveDeDispositivo, crearModbusClient } from './modbusClient.js'
-import type { DispositivoRegistrado, ModbusClient } from './modbusClient.js'
+import { claveDeDispositivo } from './modbusClient.js'
+import type { DispositivoRegistrado, ModbusClient, RegistroDeClientes } from './modbusClient.js'
+import { envolverConReconexion } from './reintentoDeTransporte.js'
+import type { TiemposDeReintentoDeTransporte } from './reintentoDeTransporte.js'
 import type {
-  MapaDeRegistros,
+  DispositivoResuelto,
   PedidoDeComando,
   RegistrosDeDispositivo,
   RespuestaUtilPlc,
@@ -21,21 +23,25 @@ import type {
 import {
   ejecutarComandoDePaso,
   leerRegistrosDeDispositivo,
+  MAPA_DE_REGISTROS_POR_DEFECTO,
   resetearMessageIn,
 } from './stepHandshake.js'
 import type { Reloj } from '../reloj.js'
 
-/**
- * Mapa por defecto. messageIn se escribe como holding register y messageOut se
- * lee como input register: coinciden en numero y no en espacio de direcciones.
- */
-const MAPA_POR_DEFECTO: MapaDeRegistros = { messageIn: 0, messageOut: 0 }
-
 export interface DependenciasDeTransporte {
+  /**
+   * Los clientes vivos. Es el MISMO registro que usa el monitor de conectividad
+   * (RF18) a proposito: con dos registros distintos el monitor conectaria y
+   * reconectaria sockets que el handshake no usa, y el handshake escribiria por
+   * sockets que el monitor nunca reviso. Un dispositivo, un cliente.
+   */
+  readonly clientes: RegistroDeClientes
   readonly mutex: DeviceMutex
   readonly reloj: Reloj
   readonly tiempos: TiemposDeHandshake
   readonly simularPlc: boolean
+  /** Numeros del reintento interno de transporte, portados del legacy. */
+  readonly reintento: TiemposDeReintentoDeTransporte
   readonly buscarDispositivo: (
     robotId: string,
     tipo: TipoDispositivo,
@@ -48,7 +54,16 @@ export interface PuertoDeTransporteConcreto {
     dispositivo: TipoDispositivo,
     pedido: PedidoDeComando,
   ) => Promise<Result<RespuestaUtilPlc, FalloDeEjecucion>>
-  readonly resetearMessageIn: (robotId: string) => Promise<Result<void, FalloDeEjecucion>>
+  /**
+   * Deja `messageIn` en 0. Sin `dispositivo` recorre los del robot (es el reset
+   * previo al retry de RF13); con `dispositivo` toca SOLO ese, que es lo que
+   * necesita el comando directo a PLC para limpiar lo que acaba de escribir sin
+   * meterse con el otro dispositivo del robot.
+   */
+  readonly resetearMessageIn: (
+    robotId: string,
+    dispositivo?: TipoDispositivo,
+  ) => Promise<Result<void, FalloDeEjecucion>>
   readonly leerRegistros: (
     robotId: string,
     dispositivo: TipoDispositivo,
@@ -59,18 +74,31 @@ export interface PuertoDeTransporteConcreto {
 export function crearPuertoDeTransporte(
   dependencias: DependenciasDeTransporte,
 ): PuertoDeTransporteConcreto {
-  const { mutex, reloj, tiempos, simularPlc, buscarDispositivo } = dependencias
-  const clientes = new Map<string, ModbusClient>()
+  const { clientes, mutex, reloj, tiempos, simularPlc, reintento, buscarDispositivo } =
+    dependencias
 
+  /**
+   * El cliente del dispositivo, envuelto en el reintento interno de transporte.
+   *
+   * El envoltorio es lo que ASEGURA LA CONEXION antes de cada operacion: sin el,
+   * el handshake le escribia registros a un cliente al que nadie le habia hecho
+   * connectTCP y toda orden moria en "Port Not Open".
+   */
   function clienteDe(dispositivo: DispositivoRegistrado): ModbusClient {
-    const clave = claveDeDispositivo(dispositivo.robotId, dispositivo.tipo)
-    const existente = clientes.get(clave)
-    if (existente !== undefined) {
-      return existente
+    return envolverConReconexion({ clientes, dispositivo, reloj, tiempos: reintento })
+  }
+
+  /**
+   * El dispositivo listo para el handshake: su tipo, su cliente y SU mapa de
+   * registros, el que se le configuro en el alta. Sin mapa propio va el por
+   * defecto, que es lo que hace `mergeRegisterMaps` del legacy.
+   */
+  function resolverParaHandshake(dispositivo: DispositivoRegistrado): DispositivoResuelto {
+    return {
+      tipo: dispositivo.tipo,
+      cliente: clienteDe(dispositivo),
+      mapaDeRegistros: dispositivo.mapaDeRegistros ?? MAPA_DE_REGISTROS_POR_DEFECTO,
     }
-    const creado = crearModbusClient(dispositivo)
-    clientes.set(clave, creado)
-    return creado
   }
 
   async function resolver(
@@ -106,40 +134,27 @@ export function crearPuertoDeTransporte(
       // simultaneas sobre el mismo socket.
       return mutex.ejecutar(claveDeDispositivo(robotId, tipo), () =>
         ejecutarComandoDePaso(
-          {
-            dispositivo: {
-              tipo,
-              cliente: clienteDe(dispositivo.valor),
-              mapaDeRegistros: MAPA_POR_DEFECTO,
-            },
-            tiempos,
-            reloj,
-          },
+          { dispositivo: resolverParaHandshake(dispositivo.valor), tiempos, reloj },
           pedido,
         ),
       )
     },
 
-    resetearMessageIn: async (robotId) => {
+    resetearMessageIn: async (robotId, soloEste) => {
       if (simularPlc) {
         return { ok: true, valor: undefined }
       }
 
-      for (const tipo of ['CARRO', 'ELEVADOR'] as const) {
+      const tipos: readonly TipoDispositivo[] =
+        soloEste === undefined ? ['CARRO', 'ELEVADOR'] : [soloEste]
+
+      for (const tipo of tipos) {
         const dispositivo = await buscarDispositivo(robotId, tipo)
         if (dispositivo === undefined) {
           continue
         }
         const reset = await mutex.ejecutar(claveDeDispositivo(robotId, tipo), () =>
-          resetearMessageIn({
-            dispositivo: {
-              tipo,
-              cliente: clienteDe(dispositivo),
-              mapaDeRegistros: MAPA_POR_DEFECTO,
-            },
-            tiempos,
-            reloj,
-          }),
+          resetearMessageIn({ dispositivo: resolverParaHandshake(dispositivo), tiempos, reloj }),
         )
         if (!reset.ok) {
           return reset
@@ -163,11 +178,7 @@ export function crearPuertoDeTransporte(
 
       return mutex.ejecutar(claveDeDispositivo(robotId, tipo), () =>
         leerRegistrosDeDispositivo({
-          dispositivo: {
-            tipo,
-            cliente: clienteDe(dispositivo.valor),
-            mapaDeRegistros: MAPA_POR_DEFECTO,
-          },
+          dispositivo: resolverParaHandshake(dispositivo.valor),
           tiempos,
           reloj,
         }),
@@ -175,10 +186,7 @@ export function crearPuertoDeTransporte(
     },
 
     cerrar: async () => {
-      for (const cliente of clientes.values()) {
-        await cliente.desconectar()
-      }
-      clientes.clear()
+      await clientes.cerrarTodos()
     },
   }
 }

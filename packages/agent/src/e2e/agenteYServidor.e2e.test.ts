@@ -514,7 +514,7 @@ describe('el enlace se cae DESPUES de ejecutar (T25, RF34, RF36)', () => {
 
 describe('el agente se reinicia a mitad de una orden (T25, RF15)', () => {
   it(
-    'rehidrata, replaya desde HOMING sobre el MISMO slot y el servidor se entera',
+    'no reanuda sola la maniobra interrumpida, y el retry la replaya sobre el MISMO slot',
     async () => {
       await montar()
 
@@ -554,8 +554,25 @@ describe('el agente se reinicia a mitad de una orden (T25, RF15)', () => {
       const comandosAntesDelReinicio = plc.comandos.length
       await arrancarAgente()
 
-      // RF15: la orden vuelve a PENDING, el robot se libera y la maniobra se
-      // replaya ENTERA desde HOMING, porque nadie sabe donde quedo el carro.
+      // RF15: el corte agarro la maniobra en el paso 3 (CARRO_BUSCA), o sea con
+      // el cajon posiblemente ya en el carro. La orden NO se reanuda sola: queda
+      // en ERROR con el motivo, el robot se libera y el agente no manda un solo
+      // comando por su cuenta. Rehacer HOMING con el cajon encima y despues ir a
+      // buscar un cajon que el robot ya tiene es la maniobra que no puede pasar.
+      await esperarOrdenLocalEn('PICK-1', 'ERROR')
+      const detenida = await ordenLocal('PICK-1')
+      expect(detenida?.errorReason).toContain('interrumpida por un reinicio')
+      const robotLibre = await reiniciado.orquestador.repositorios.robots.buscarPorId(ROBOT_ID)
+      expect(robotLibre?.ordenActivaId).toBeNull()
+      // Ni un comando al PLC: el robot se quedo quieto esperando al operario.
+      expect(plc.comandos).toHaveLength(comandosAntesDelReinicio)
+
+      // El operario ya devolvio el cajon al punto de origen del paso —el mismo
+      // procedimiento de RF13— y da el retry. Recien ahi se replaya ENTERA desde
+      // HOMING.
+      const retry = await fetch(`${urlDelAgente}/api/orders/${ordenId}/retry`, { method: 'POST' })
+      expect(retry.status).toBe(200)
+
       await esperarOrdenLocalEn('PICK-1', 'DONE')
       const replay = plc.comandos.slice(comandosAntesDelReinicio)
       expect(replay).toHaveLength(MANIOBRAS_POR_ORDEN)
@@ -663,8 +680,13 @@ describe('un paso del PLC falla (T25, RF13)', () => {
       // no vuelve nunca a su ubicacion de guardado.
       expect(fallada?.targetLocation).toBe(ORIGEN_A)
 
-      // RF13: el slot conserva su estado y no pasa a ERROR.
-      expect(await estadoDelSlot(SLOT_DE_A)).toBe('OCUPADO')
+      // RF13: el slot conserva su estado y no pasa a ERROR. Ese estado es
+      // DEVOLVIENDO y no OCUPADO: la devolucion ya arranco y el cajon puede no
+      // estar mas en el slot, asi que dejarlo figurando OCUPADO mandaria a un
+      // PICK nuevo del mismo cajon por el camino de refcount (RF07) a buscar un
+      // cajon que el robot ya levanto. Lo retiene esta orden hasta que el retry
+      // la termine.
+      expect(await estadoDelSlot(SLOT_DE_A)).toBe('DEVOLVIENDO')
 
       plc.politica = () => 'OK'
       const comandosAntesDelRetry = plc.comandos.length

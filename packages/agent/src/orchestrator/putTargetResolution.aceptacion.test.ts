@@ -25,6 +25,13 @@ import { resolverDestinoDePut } from './putTargetResolution.js'
 
 const SLOT = '3X02AE1'
 
+/**
+ * La zona de pickeo del robot. Entra al pedido porque el destino de una
+ * devolucion NUNCA puede caer en ella (invariante de seguridad de RF11): sin la
+ * zona en la mano, "el destino es un slot" es indecidible.
+ */
+const ZONA_DE_PICKEO: readonly string[] = [SLOT, '3X02AC1']
+
 const LIBRE: EstadoSlot = { estado: 'LIBRE' }
 
 const CON_CAJON_EN_LIBROS: EstadoSlot = {
@@ -47,6 +54,7 @@ describe('destino de una devolucion (portado de orchestrator.test.js)', () => {
   it('acepta el PUT sobre un slot LIBRE con destino y lo exige cuando falta', () => {
     const conDestino = resolverDestinoDePut({
       slotLocationCode: SLOT,
+      zonaDePickeo: ZONA_DE_PICKEO,
       estadoDelSlot: LIBRE,
       targetLocationPedido: '3X04AE1',
     })
@@ -63,6 +71,7 @@ describe('destino de una devolucion (portado de orchestrator.test.js)', () => {
     // mandaba targetLocation y devolvia el cajon al mismo slot.
     const sinDestino = resolverDestinoDePut({
       slotLocationCode: SLOT,
+      zonaDePickeo: ZONA_DE_PICKEO,
       estadoDelSlot: LIBRE,
       targetLocationPedido: null,
     })
@@ -76,6 +85,7 @@ describe('destino de una devolucion (portado de orchestrator.test.js)', () => {
     // targetLocation recibido se IGNORA.
     const conCajon = resolverDestinoDePut({
       slotLocationCode: SLOT,
+      zonaDePickeo: ZONA_DE_PICKEO,
       estadoDelSlot: CON_CAJON_EN_LIBROS,
       targetLocationPedido: '9X09AL9',
     })
@@ -92,6 +102,7 @@ describe('destino de una devolucion (portado de orchestrator.test.js)', () => {
   it('deja el PUT esperando si el slot esta en ERROR o tomado por otra maniobra', () => {
     const sobreSlotEnError = resolverDestinoDePut({
       slotLocationCode: SLOT,
+      zonaDePickeo: ZONA_DE_PICKEO,
       estadoDelSlot: INUTILIZABLE,
       targetLocationPedido: '3X04AE1',
     })
@@ -104,6 +115,7 @@ describe('destino de una devolucion (portado de orchestrator.test.js)', () => {
 
     const sobreSlotReservado = resolverDestinoDePut({
       slotLocationCode: SLOT,
+      zonaDePickeo: ZONA_DE_PICKEO,
       estadoDelSlot: TOMADO_POR_OTRA_ORDEN,
       targetLocationPedido: '3X04AE1',
     })

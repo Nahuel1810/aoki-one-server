@@ -18,10 +18,12 @@ import { resolverDestinoDePut } from './putTargetResolution.js'
 import type {
   ErrorLocationCode,
   ErrorSeleccionSlot,
+  ErrorTransicionSlot,
   EstadoSlot,
   Lado,
   NombreEstadoSlot,
   Result,
+  SlotInexistente,
 } from '@aoki-one/domain'
 
 import type { Orden } from '../persistence/index.js'
@@ -72,6 +74,29 @@ export type ErrorDeResolucionDeSlot =
   | { readonly codigo: 'SELECCION_INVALIDA'; readonly causa: ErrorSeleccionSlot }
   /** Solo lo genuinamente invalido de un PUT: un slot tomado sale por EN_ESPERA. */
   | { readonly codigo: 'DESTINO_DE_PUT_INVALIDO'; readonly causa: ErrorDeDestinoDePut }
+  /**
+   * El slot de un PUT no existe en la zona de pickeo de ese robot.
+   *
+   * NO es una espera. Un slot tomado se destraba solo; uno que no existe no
+   * aparece nunca, asi que esperarlo es esperar para siempre —y, con el robot
+   * eligiendo esa orden en cada ciclo, arrastraba a toda la cola—. El legacy
+   * contestaba 400 al crear la orden ("PUT requiere locationCode de zona pickeo
+   * configurada"): la validacion de admision vuelve, y esto es la red por si la
+   * zona cambia despues de admitida.
+   */
+  | { readonly codigo: 'SLOT_DE_PUT_INEXISTENTE'; readonly causa: SlotInexistente }
+  /**
+   * La reserva del slot la rechazo la maquina de estados.
+   *
+   * Antes se ignoraba y la orden seguia adelante sobre un slot que no estaba
+   * reservado para ella. Un rechazo aca es una carrera con otra maniobra: sale
+   * por el canal de error en vez de terminar en dos ordenes sobre el mismo slot.
+   */
+  | {
+      readonly codigo: 'RESERVA_DE_SLOT_RECHAZADA'
+      readonly slotLocationCode: string
+      readonly causa: ErrorTransicionSlot
+    }
 
 export async function resolverSlotDeOrden(
   dependencias: DependenciasDelOrquestador,
@@ -126,16 +151,13 @@ export async function resolverSlotDeOrden(
     // Para un PUT el locationCode ES el slot del que sale el cajon.
     const slot = zona.find((candidato) => candidato.locationCode === origen.valor.baseCode)
     if (slot === undefined) {
+      // Un slot que NO EXISTE no es un estado transitorio: un typo en la tablet
+      // entraba como orden valida y quedaba PENDING para siempre.
       return {
-        ok: true,
-        valor: {
-          tipo: 'EN_ESPERA',
-          lado: origen.valor.lado,
-          motivo: {
-            tipo: 'SLOT_DE_PUT_NO_DISPONIBLE',
-            slotLocationCode: origen.valor.baseCode,
-            estado: 'ERROR',
-          },
+        ok: false,
+        error: {
+          codigo: 'SLOT_DE_PUT_INEXISTENTE',
+          causa: { codigo: 'SLOT_INEXISTENTE', locationCode: origen.valor.baseCode },
         },
       }
     }
@@ -144,6 +166,9 @@ export async function resolverSlotDeOrden(
       slotLocationCode: slot.locationCode,
       estadoDelSlot: slot.estado,
       targetLocationPedido: orden.targetLocation,
+      // La zona entera, no solo el slot de esta orden: el invariante prohibe
+      // devolver a CUALQUIER slot de pickeo, no solo al propio.
+      zonaDePickeo: zona.map((candidato) => candidato.locationCode),
     })
     if (!destino.ok) {
       return { ok: false, error: { codigo: 'DESTINO_DE_PUT_INVALIDO', causa: destino.error } }
@@ -163,6 +188,29 @@ export async function resolverSlotDeOrden(
         },
       }
     }
+
+    // El slot se RESERVA para este PUT, igual que el PICK reserva el suyo.
+    //
+    // Es el primer eslabon de la cadena de RF06 para una devolucion
+    // (LIBRE|OCUPADO -> RESERVADO -> DEVOLVIENDO -> LIBRE) y nadie lo emitia: el
+    // evento existia en el dominio, con tests, sin un solo productor. Sin el, la
+    // maniobra intentaba pasar de OCUPADO a DEVOLVIENDO, la maquina rechazaba y
+    // el slot se quedaba OCUPADO mientras el robot se llevaba el cajon.
+    const reserva = transicionarSlot(slot.estado, {
+      tipo: 'RESERVAR_PARA_PUT',
+      ordenId: orden.id,
+    })
+    if (!reserva.ok) {
+      return {
+        ok: false,
+        error: {
+          codigo: 'RESERVA_DE_SLOT_RECHAZADA',
+          slotLocationCode: slot.locationCode,
+          causa: reserva.error,
+        },
+      }
+    }
+    await repositorios.slots.guardarEstado(orden.robotId, slot.locationCode, reserva.valor)
 
     // El destino resuelto SE PERSISTE. Sin esto el `targetLocation` de la orden
     // se queda como vino del pedido, y en la devolucion estandar —slot con cajon
@@ -214,9 +262,20 @@ export async function resolverSlotDeOrden(
     tipo: 'RESERVAR_PARA_PICK',
     ordenId: orden.id,
   })
-  if (reserva.ok) {
-    await repositorios.slots.guardarEstado(orden.robotId, ganador.locationCode, reserva.valor)
+  if (!reserva.ok) {
+    // El ranking solo devuelve slots LIBRE, asi que un rechazo aca es una
+    // carrera. Se reporta: ignorarlo mandaba la maniobra sobre un slot que
+    // retiene otra orden.
+    return {
+      ok: false,
+      error: {
+        codigo: 'RESERVA_DE_SLOT_RECHAZADA',
+        slotLocationCode: ganador.locationCode,
+        causa: reserva.error,
+      },
+    }
   }
+  await repositorios.slots.guardarEstado(orden.robotId, ganador.locationCode, reserva.valor)
   await repositorios.ordenes.actualizar(orden.id, {
     slotLocationCode: ganador.locationCode,
     waitingForSlot: false,

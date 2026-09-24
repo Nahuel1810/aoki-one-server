@@ -464,7 +464,17 @@ describe('/health y el estado del enlace (T22, RF25, RF36)', () => {
     expect(typeof cuerpo['startedAt']).toBe('number')
     expect(cuerpo['devices']).toHaveLength(2)
     expect(cuerpo['robots']).toEqual([
-      { id: ROBOT_ID, robotId: ROBOT_ID, status: 'IDLE', queueDepth: 0, activeOrderId: null },
+      {
+        id: ROBOT_ID,
+        robotId: ROBOT_ID,
+        status: 'IDLE',
+        queueDepth: 0,
+        activeOrderId: null,
+        // RF21: la pausa de cola sobrevive al reinicio del proceso, asi que
+        // /health la informa. Sin este campo, una cola pausada un viernes deja
+        // al operario con un health en "ok" y un robot que no se mueve.
+        paused: false,
+      },
     ])
     expect(cuerpo['lastCompletedOrder']).toBeNull()
   })

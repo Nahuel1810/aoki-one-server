@@ -35,7 +35,11 @@ import { admitirOrden } from '../orchestrator/orderIntake.js'
 import type { DependenciasDelOrquestador } from '../orchestrator/ports.js'
 import type { SlotDeRobot } from '../persistence/slotRepository.js'
 import { reintentarOrden } from '../orchestrator/retry.js'
-import type { DispositivoRegistrado } from '../transport/modbusClient.js'
+import type { EstadoDeConexion } from '../transport/connectionMonitor.js'
+import { claveDeDispositivo } from '../transport/modbusClient.js'
+import type { ClaveDeDispositivo, DispositivoRegistrado } from '../transport/modbusClient.js'
+import { MAPA_DE_REGISTROS_POR_DEFECTO } from '../transport/stepHandshake.js'
+import type { RespuestaEsperada } from '../transport/stepHandshake.js'
 import { ENLACE_APAGADO, type ReporteDeEnlace } from '../sync/link.js'
 
 export type CuerpoDeRespuesta<T> =
@@ -55,6 +59,16 @@ export interface DependenciasDeApi {
    * esperaria al tick de seguridad, que a proposito es de baja frecuencia.
    */
   readonly despertar: () => void
+  /**
+   * Estado de conexion por dispositivo, tal como lo dejo el ultimo ciclo del
+   * monitor (RF18).
+   *
+   * Ausente = no hay monitor (transporte inyectado). Es el UNICO indicador que
+   * tiene el operario para distinguir "cable desenchufado" de "PLC trabado" de
+   * "todo bien pero la orden fallo", asi que no puede seguir siendo una
+   * constante derivada de si hay simulacion.
+   */
+  readonly estadoDeConexion?: (clave: ClaveDeDispositivo) => EstadoDeConexion | undefined
   /**
    * Estado del enlace con el servidor (RF36).
    *
@@ -105,7 +119,8 @@ export function crearServidorHttp(dependencias: DependenciasDeApi): ServidorHttp
 }
 
 function construirApp(dependencias: DependenciasDeApi): express.Express {
-  const { orquestador, simularPlc, despertar, tokenDeMantenimiento, enlace } = dependencias
+  const { orquestador, simularPlc, despertar, tokenDeMantenimiento, enlace, estadoDeConexion } =
+    dependencias
   const { repositorios, siteId } = orquestador
   const arrancadoEn = orquestador.reloj.ahoraMs()
 
@@ -197,6 +212,26 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
   // Los campos van en la raiz Y bajo `data`: el front nuevo consume el envelope
   // { ok, data } de toda la API, y el chequeo de infraestructura lee la raiz sin
   // saber del envelope. Duplicarlos es mas barato que romper a uno de los dos.
+  /**
+   * Conectividad de un dispositivo, en la forma que consume el front.
+   *
+   * Sale del monitor (RF18). Sin estado todavia —el monitor no completo su
+   * primer ciclo, o no hay monitor— se contesta lo mismo que el legacy dejaba en
+   * el alta del dispositivo: DISCONNECTED. Decir CONNECTED sin haber hablado con
+   * el PLC seria peor que decir que no se sabe. En simulacion se reporta
+   * conectado porque es lo que el monitor mismo contesta en ese modo (RF20): el
+   * agente se prueba sin PLC y decir lo contrario seria ruido.
+   */
+  function conexionDe(dispositivo: DispositivoRegistrado): ConexionDeApi {
+    const estado = estadoDeConexion?.(claveDeDispositivo(dispositivo.robotId, dispositivo.tipo))
+    if (estado === undefined) {
+      return { status: simularPlc ? 'CONNECTED' : 'DISCONNECTED', lastSeen: null }
+    }
+    return estado.tipo === 'CONECTADO'
+      ? { status: 'CONNECTED', lastSeen: estado.ultimoContactoMs }
+      : { status: 'DISCONNECTED', lastSeen: null }
+  }
+
   app.get('/health', (_req: Request, res: Response) => {
     atender(res, async () => {
       const robots = await repositorios.robots.listar(siteId)
@@ -212,9 +247,9 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           type: dispositivo.tipo,
           host: dispositivo.host,
           port: dispositivo.puerto,
-          // En simulacion se reporta conectado a proposito: es el modo en el que
-          // el agente se prueba sin PLC, y decir lo contrario seria ruido.
-          connected: simularPlc,
+          // Sale del monitor, igual que el `status` de GET /api/devices: dos
+          // pantallas que leen lo mismo no pueden contestar distinto.
+          connected: conexionDe(dispositivo).status === 'CONNECTED',
         }))
 
       const estadoDeRobots = await Promise.all(
@@ -226,6 +261,12 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
             status: robot.estado,
             queueDepth: cola.queueLength,
             activeOrderId: robot.ordenActivaId,
+            // RF21 — La pausa de cola sobrevive al reinicio del proceso (el
+            // legacy la perdia). Sale por /health porque la alternativa es el
+            // modo que no puede pasar: la notebook arranca sola un lunes, el
+            // health dice "ok" y el robot no se mueve porque alguien apreto
+            // pausar el viernes. Aca se ve, y se grita ademas al arrancar.
+            paused: cola.paused,
           }
         }),
       )
@@ -265,7 +306,11 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
 
       const admision = await admitirOrden(orquestador, {
         robotId: null,
-        externalOrderId: pedido.externalOrderId ?? null,
+        // El `id` del body es la clave de dedupe del front actual (la tablet
+        // manda {id: 1234}). Sin el, cada toque del boton creaba una orden nueva
+        // con un externalOrderId propio y un doble tap eran DOS maniobras, la
+        // segunda a buscar un cajon que ya no estaba.
+        externalOrderId: pedido.externalOrderId ?? pedido.id ?? null,
         tipo: pedido.type,
         // El alta local es siempre MANUAL: el ingreso de picking se fue al servidor.
         origen: 'MANUAL',
@@ -459,6 +504,20 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     })
   })
 
+  // RF21 — La SALIDA del operario, y es la unica que hay.
+  //
+  // Libera el slot desde CUALQUIER estado, como `StateManager.releaseSlot` del
+  // legacy. Es lo que sostiene la planta cuando un PICK falla de una forma que el
+  // retry no arregla —cajon trabado, PLC en falla—: el slot queda en RESERVADO o
+  // BUSCANDO y, sin esta salida, cada fallo asi se come uno de los doce slots de
+  // la zona y la unica correccion es editar SQLite a mano. Liberar corrige los
+  // libros y NO mueve el robot; para eso existe.
+  //
+  // LA GUARDA: no se libera el slot de una orden EN CURSO. Mientras el ciclo
+  // maniobra, el handshake con el PLC no mira el estado del slot, asi que
+  // liberarlo ahi deja el cajon a mitad de camino con los libros diciendo que el
+  // slot esta vacio, y el proximo PICK lo elige y manda el carro encima. El
+  // operario espera a que termine —o cancela— y despues libera.
   app.post('/api/slots/:locationCode/release', (req: Request, res: Response) => {
     atender(res, async () => {
       const locationCode = texto(req.params['locationCode'])
@@ -470,7 +529,18 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           continue
         }
 
-        const siguiente = transicionarSlot(slot.estado, { tipo: 'LIBERAR' })
+        const ordenId = 'ordenId' in slot.estado ? slot.estado.ordenId : null
+        if (ordenId !== null && (await estaEnCurso(ordenId))) {
+          error(
+            res,
+            409,
+            `el slot ${locationCode} lo esta usando el pedido ${ordenId} ahora mismo: espera a que el robot termine antes de liberarlo`,
+          )
+          return
+        }
+
+        const estadoPrevio = slot.estado.estado
+        const siguiente = transicionarSlot(slot.estado, { tipo: 'LIBERAR_MANUAL' })
         if (!siguiente.ok) {
           error(res, 409, siguiente.error.codigo)
           return
@@ -478,7 +548,8 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
 
         await repositorios.slots.guardarEstado(robot.id, locationCode, siguiente.valor)
         // La liberacion manual corrige los libros y NO mueve el robot: queda
-        // registrada para que se pueda auditar quien la uso.
+        // registrada —con el estado del que se salio y el pedido que lo retenia—
+        // para que se pueda auditar quien la uso y sobre que.
         await repositorios.eventos.registrar({
           id: orquestador.generarId(),
           ts: orquestador.reloj.ahoraMs(),
@@ -486,10 +557,10 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           entidadId: locationCode,
           evento: 'SLOT_RELEASED_MANUAL',
           severidad: 'INFO',
-          metadata: { robotId: robot.id },
+          metadata: { robotId: robot.id, estadoPrevio, ordenId },
         })
 
-        ok(res, 200, { locationCode, status: 'LIBRE' })
+        ok(res, 200, { locationCode, status: 'LIBRE', previousStatus: estadoPrevio })
         return
       }
 
@@ -512,9 +583,17 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
         puerto: alta.port,
         unitId: alta.unitId,
         timeoutMsDeSocket: alta.timeoutMs,
+        // El mapa de registros es configuracion de planta y entra por el alta,
+        // como en el legacy: un dispositivo que no usa el registro 0 no falla, le
+        // escribe el comando a otra direccion del PLC. Lo que no se declara lo
+        // completa el default, que es lo que hace `mergeRegisterMaps`.
+        mapaDeRegistros: {
+          messageIn: alta.registerMap?.messageIn ?? MAPA_DE_REGISTROS_POR_DEFECTO.messageIn,
+          messageOut: alta.registerMap?.messageOut ?? MAPA_DE_REGISTROS_POR_DEFECTO.messageOut,
+        },
       })
 
-      ok(res, 201, dispositivo)
+      ok(res, 201, aDispositivoRegistradoDeApi(dispositivo))
     })
   })
 
@@ -529,7 +608,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
       ok(
         res,
         200,
-        porRobot.flat().map((dispositivo) => aDispositivoDeApi(dispositivo, simularPlc)),
+        porRobot.flat().map((dispositivo) => aDispositivoDeApi(dispositivo, conexionDe(dispositivo))),
       )
     })
   })
@@ -550,7 +629,7 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
             // el front los valida con un solo esquema y los muestra en las dos
             // pantallas, asi que dos formas distintas rompen una de las dos.
             devices: (await repositorios.dispositivos.listarPorRobot(robot.id)).map(
-              (dispositivo) => aDispositivoDeApi(dispositivo, simularPlc),
+              (dispositivo) => aDispositivoDeApi(dispositivo, conexionDe(dispositivo)),
             ),
             // El legacy devolvia {} aca: armaba la promesa y no la esperaba.
             queue: await snapshotDeCola(robot.id),
@@ -575,18 +654,38 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
           return
         }
         const valor = pedido.value
+        const robotId = texto(req.params['robotId'])
+        const respuestasEsperadas = respuestasEsperadasDe(pedido)
 
-        const resultado = await orquestador.transporte.ejecutarComandoDePaso(
-          texto(req.params['robotId']),
-          tipo,
-          { comando: valor, respuestasEsperadas: [100, '1##'] },
-        )
+        const resultado = await orquestador.transporte.ejecutarComandoDePaso(robotId, tipo, {
+          comando: valor,
+          respuestasEsperadas,
+        })
         if (!resultado.ok) {
+          // El comando YA se escribio: sin este reset `messageIn` queda con el
+          // valor puesto a mano y el proximo paso real arranca con el registro
+          // sucio, o sea con un comando colgado que el PLC puede tomar. Es el
+          // mismo reset que hace el retry de orden (RF13), acotado al unico
+          // dispositivo que este endpoint toco.
+          const limpieza = await orquestador.transporte.resetearMessageIn(robotId, tipo)
+          if (!limpieza.ok) {
+            // Que falle el reset es peor que el comando fallido: queda un
+            // registro escrito que nadie limpio. Se dice cual fue; taparlo seria
+            // dejar el proximo paso real arrancando sucio y sin rastro de por que.
+            orquestador.logger.error('DIRECT_COMMAND_RESET_FAILED', {
+              robotId,
+              dispositivo: tipo,
+              fallo: limpieza.error.tipo,
+            })
+          }
           error(res, 502, resultado.error.tipo)
           return
         }
 
-        ok(res, 200, { response: { ack: 'DONE', kind: resultado.valor.kind } })
+        ok(res, 200, {
+          response: { ack: 'DONE', kind: resultado.valor.kind },
+          expectedResponses: respuestasEsperadas,
+        })
       })
     },
   )
@@ -651,6 +750,18 @@ function construirApp(dependencias: DependenciasDeApi): express.Express {
     ok(res, 200, await snapshotDeCola(robotId))
   }
 
+  /**
+   * True si esa orden es una maniobra en curso.
+   *
+   * Es la guarda de la liberacion manual de slot: IN_PROGRESS significa que el
+   * ciclo del robot esta adentro del handshake con el PLC, y ese ciclo no vuelve
+   * a mirar el slot hasta terminar el paso.
+   */
+  async function estaEnCurso(ordenId: string): Promise<boolean> {
+    const orden = await repositorios.ordenes.buscarPorId(ordenId)
+    return orden?.estado === 'IN_PROGRESS'
+  }
+
   async function snapshotDeCola(robotId: string): Promise<{
     robotId: string
     activeOrderId: string | null
@@ -685,7 +796,24 @@ const TIPO_DE_DISPOSITIVO = z.enum(['CARRO', 'ELEVADOR'], {
   message: 'dispositivo debe ser carro o elevador',
 })
 
+/**
+ * El `id` con el que el front dedupea, portado del legacy (`parseNumericOrderId`).
+ *
+ * La tablet manda `{id: 1234}` y espera que el segundo toque del boton devuelva
+ * la MISMA orden. Se exige entero, como el legacy, y se normaliza a texto
+ * —`'1234'` y `1234` son el mismo pedido— porque `external_order_id` es TEXT.
+ * No colisiona con el id local de RF35, que va prefijado (`local-<agente>-<uuid>`)
+ * y nunca es solo digitos.
+ */
+const ID_DE_DEDUPE = z
+  .union([z.number(), z.string().trim().min(1)])
+  .refine((valor) => Number.isInteger(Number(valor)), {
+    message: 'id debe ser numerico entero',
+  })
+  .transform((valor) => String(Number(valor)))
+
 const ALTA_DE_ORDEN = z.object({
+  id: ID_DE_DEDUPE.nullish(),
   type: z.enum(['PICK', 'PUT'], { message: 'type debe ser PICK o PUT' }).default('PICK'),
   locationCode: z.string().trim().min(1, 'locationCode es requerido'),
   targetLocation: z.string().trim().min(1).nullish(),
@@ -707,11 +835,66 @@ const ALTA_DE_DISPOSITIVO = z.object({
   // Los Festo de planta no usan el unitId 1.
   unitId: z.coerce.number().int().min(0).max(255).default(255),
   timeoutMs: z.coerce.number().int().min(1).default(2000),
+  /**
+   * En que direcciones Modbus vive este dispositivo. Ausente = el default (0 y 0).
+   *
+   * Se validan las dos como enteros no negativos, que es la validacion de alta
+   * que el legacy tenia en `src/config/deviceRegisterMaps.js` mas
+   * `parseRegisterMap`. Una direccion fraccionaria o negativa no existe en
+   * Modbus: aceptarla no falla, manda el comando a cualquier lado.
+   */
+  registerMap: z
+    .object({
+      messageIn: z.coerce.number().int().min(0).optional(),
+      messageOut: z.coerce.number().int().min(0).optional(),
+    })
+    .optional(),
 })
+
+/**
+ * Un codigo que cierra el comando: un numero exacto o un comodin de rango del
+ * legacy (`1##` = 100..199, `2##` = 200..299).
+ */
+const RESPUESTA_ESPERADA = z.union([
+  z.coerce.number().int(),
+  z.literal('1##'),
+  z.literal('2##'),
+])
 
 const COMANDO_DIRECTO = z.object({
   value: z.coerce.number({ message: 'value debe ser un numero' }),
+  /**
+   * Con que respuestas del PLC se da por cerrado el comando (RF17).
+   *
+   * Vuelve a entrar por el body, como en el legacy: sin esto, mover el elevador a
+   * mano —que contesta `2##`, el nivel, y nunca 100— se quedaba esperando los 90
+   * s enteros del presupuesto de ack y terminaba en 502.
+   */
+  expectedResponses: z.array(RESPUESTA_ESPERADA).min(1).optional(),
+  /** La forma singular del legacy. Se acepta igual: es la que manda la herramienta vieja. */
+  expectedResponse: RESPUESTA_ESPERADA.optional(),
 })
+
+/**
+ * Las respuestas que cierran el comando directo.
+ *
+ * Precedencia del legacy: `expectedResponses` gana, si no `expectedResponse`, y
+ * si no el default. El default agrega `'1##'` al `[100]` del legacy —DESVIO
+ * DECLARADO— para que un error del PLC se informe apenas llega, en vez de
+ * agotar los 90 s de polling esperando un 100 que ya no va a venir.
+ */
+function respuestasEsperadasDe(pedido: {
+  readonly expectedResponses?: readonly RespuestaEsperada[] | undefined
+  readonly expectedResponse?: RespuestaEsperada | undefined
+}): readonly RespuestaEsperada[] {
+  if (pedido.expectedResponses !== undefined) {
+    return pedido.expectedResponses
+  }
+  if (pedido.expectedResponse !== undefined) {
+    return [pedido.expectedResponse]
+  }
+  return [100, '1##']
+}
 
 const RANGO_DE_REPORTE = z.object({
   startDate: z.coerce.number().int().optional(),
@@ -760,18 +943,25 @@ function aSlotDeApi(slot: SlotDeRobot): Record<string, unknown> {
   }
 }
 
+/** `status` y `lastSeen` de un dispositivo, ya resueltos contra el monitor. */
+interface ConexionDeApi {
+  readonly status: 'CONNECTED' | 'DISCONNECTED'
+  /** Ultimo contacto real con el PLC; `null` si nunca se logro. */
+  readonly lastSeen: number | null
+}
+
 /**
  * Forma de un dispositivo tal como la consume el front.
  *
- * `status` y `lastSeen` son diagnostico, y hoy salen de lo mismo que `/health`:
- * en simulacion se reporta conectado a proposito —es el modo en el que el agente
- * se prueba sin PLC— y en vivo se reporta DISCONNECTED porque el agente todavia
- * no persiste la conectividad por dispositivo. Decir CONNECTED sin haber hablado
- * con el PLC seria peor que decir que no se sabe.
+ * `status` y `lastSeen` son diagnostico y salen del monitor de conectividad
+ * (RF18), que es quien de verdad toca el socket. Antes eran una constante
+ * derivada de `simularPlc`, asi que en planta la pantalla decia DISCONNECTED
+ * para siempre y el operario no podia distinguir un cable desenchufado de un PLC
+ * trabado ni de una orden que fallo por otra cosa.
  */
 function aDispositivoDeApi(
   dispositivo: DispositivoRegistrado,
-  simularPlc: boolean,
+  conexion: ConexionDeApi,
 ): Record<string, unknown> {
   return {
     // La identidad de un dispositivo es `<robotId>:<TIPO>`: un robot tiene un
@@ -783,10 +973,27 @@ function aDispositivoDeApi(
     port: dispositivo.puerto,
     unitId: dispositivo.unitId,
     timeoutMs: dispositivo.timeoutMsDeSocket,
-    status: simularPlc ? 'CONNECTED' : 'DISCONNECTED',
+    status: conexion.status,
     lastCommand: null,
-    lastSeen: null,
+    lastSeen: conexion.lastSeen,
     updatedAt: null,
+    // En que direcciones esta cableado. Es lo primero que se mira cuando un
+    // dispositivo "no responde" y el cable esta bien.
+    registerMap: dispositivo.mapaDeRegistros ?? MAPA_DE_REGISTROS_POR_DEFECTO,
+  }
+}
+
+/**
+ * Forma del alta (201). Lleva el mapa de registros ya resuelto, para que quien
+ * dio de alta sin declararlo vea cual le quedo.
+ */
+function aDispositivoRegistradoDeApi(
+  dispositivo: DispositivoRegistrado,
+): Record<string, unknown> {
+  return {
+    ...dispositivo,
+    // El front lee la API en ingles; `mapaDeRegistros` se queda del lado de adentro.
+    registerMap: dispositivo.mapaDeRegistros ?? MAPA_DE_REGISTROS_POR_DEFECTO,
   }
 }
 
@@ -837,6 +1044,8 @@ function mensajeDeAdmision(codigo: string): string {
       return 'locationCode invalido'
     case 'ROBOT_NO_REGISTRADO':
       return 'no hay robot registrado para esa estanteria'
+    case 'PUT_FUERA_DE_ZONA_DE_PICKEO':
+      return 'PUT requiere un locationCode de la zona de pickeo configurada'
     default:
       return codigo
   }
@@ -857,7 +1066,10 @@ function mensajeDeCancelacion(error: ErrorDeCancelacionDeOrden): string {
         ? 'no se puede cancelar un pedido que el robot ya esta ejecutando'
         : `no se puede cancelar un pedido en ${error.estado}`
     case 'ORDEN_CON_SLOT_TOMADO':
-      return `el pedido todavia tiene tomado el slot ${error.slotLocationCode}: reintentalo para que el robot lo libere`
+      // Las dos salidas, en el mismo texto: el retry es la normal, la liberacion
+      // manual es la que queda cuando el retry no va a funcionar (cajon trabado,
+      // PLC en falla). Antes esta respuesta era un callejon sin salida.
+      return `el pedido todavia tiene tomado el slot ${error.slotLocationCode}: reintentalo para que el robot lo libere, o libera el slot a mano con POST /api/slots/${error.slotLocationCode}/release y cancela despues`
   }
 }
 

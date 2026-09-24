@@ -132,8 +132,25 @@ export type EventoSlot =
   | { readonly tipo: 'OCUPAR'; readonly cajon: Cajon }
   /** RESERVADO -> DEVOLVIENDO. Arranco la maniobra de PUT. */
   | { readonly tipo: 'INICIAR_DEVOLUCION'; readonly ordenId: string }
-  /** DEVOLVIENDO -> LIBRE, y tambien la liberacion manual desde la tablet. */
+  /** DEVOLVIENDO | OCUPADO -> LIBRE. Es el cierre normal de la maniobra. */
   | { readonly tipo: 'LIBERAR' }
+  /**
+   * CUALQUIER estado -> LIBRE. Es la salida del operario, y es TOTAL a proposito.
+   *
+   * Portado de `StateManager.releaseSlot`, que libera sin mirar el estado: es lo
+   * que hoy sostiene la planta cuando un PICK falla de una forma que el retry no
+   * arregla —cajon trabado, PLC en falla— y el slot queda en RESERVADO o
+   * BUSCANDO para siempre. Sin esta salida, cada fallo de ese tipo se come uno
+   * de los doce slots de la zona y la unica correccion es editar SQLite a mano.
+   *
+   * Que la transicion sea total NO la vuelve segura por si sola: liberar el slot
+   * de una orden que el robot esta ejecutando AHORA deja el cajon a mitad de
+   * camino y los libros diciendo que el slot esta vacio. Esa guarda es del
+   * llamador, que es el unico que sabe en que estado esta la ORDEN (la API
+   * rechaza la liberacion cuando la orden que retiene el slot esta IN_PROGRESS);
+   * el dominio no la puede hacer porque no conoce la orden, solo su id.
+   */
+  | { readonly tipo: 'LIBERAR_MANUAL' }
 
 export type NombreEventoSlot = EventoSlot['tipo']
 
@@ -226,10 +243,17 @@ export function transicionarSlot(
         : rechazo
 
     case 'LIBERAR':
-      // Cierre de la devolucion, y tambien la liberacion manual desde la tablet
-      // sobre un slot ocupado: corrige los libros sin mover el robot.
+      // Cierre de la devolucion, y tambien la liberacion de un slot ocupado:
+      // corrige los libros sin mover el robot.
       return estado.estado === 'DEVOLVIENDO' || estado.estado === 'OCUPADO'
         ? { ok: true, valor: { estado: 'LIBRE' } }
         : rechazo
+
+    case 'LIBERAR_MANUAL':
+      // Total: desde CUALQUIER estado. Es la salida del operario cuando la
+      // maniobra no va a volver (ver `EventoSlot`). El cajon que hubiera quedado
+      // apoyado deja de estar en libros, que es justamente lo que el operario
+      // esta declarando al liberar.
+      return { ok: true, valor: { estado: 'LIBRE' } }
   }
 }

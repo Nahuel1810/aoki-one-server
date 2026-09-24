@@ -35,6 +35,8 @@ function crearClienteDoble(secuenciaDeMessageOut: readonly number[]): ClienteDob
     conectar: () => Promise.resolve(),
     desconectar: () => Promise.resolve(),
     estaConectado: () => true,
+    // El doble no tiene socket que bajar: la bandera de conectado es fija.
+    marcarDesconectado: () => undefined,
     leerRegistrosDeRetencion: (_direccion, cantidad) =>
       Promise.resolve(new Array<number>(cantidad).fill(0)),
     leerRegistrosDeEntrada: () => Promise.resolve([pendientes.shift() ?? 0]),

@@ -291,4 +291,33 @@ describe('API local de ordenes', () => {
       await agente.detener()
     }
   })
+
+  // DIVERGENCIA CORREGIDA. El legacy contestaba 400 ("PUT requiere locationCode
+  // de zona pickeo configurada"); el sistema nuevo aceptaba el pedido con 202 y
+  // la orden quedaba PENDING esperando un slot que no existe. Un typo en la
+  // tablet entraba como orden valida y ademas —por el head-of-line block—
+  // congelaba la cola de ese robot: era el disparador mas probable del deadlock.
+  it('POST /api/orders rechaza con 400 un PUT sobre un locationCode que no es slot de pickeo', async () => {
+    const agente = await levantarAgente()
+
+    try {
+      // Gramatica valida, pero la posicion 3 no esta en la zona configurada.
+      const respuesta = await postearJson(agente, '/api/orders', {
+        type: 'PUT',
+        robotId: ROBOT_ID,
+        locationCode: '3X02AE3',
+      })
+      const cuerpo = await leerCuerpo<never>(respuesta)
+
+      expect(respuesta.status).toBe(400)
+      expect(cuerpo.ok).toBe(false)
+      if (!cuerpo.ok) {
+        expect(cuerpo.error).toMatch(/zona de pickeo/i)
+      }
+      // Y sobre todo: no quedo ninguna orden esperando para siempre.
+      expect(await agente.orquestador.repositorios.ordenes.listar({})).toHaveLength(0)
+    } finally {
+      await agente.detener()
+    }
+  })
 })

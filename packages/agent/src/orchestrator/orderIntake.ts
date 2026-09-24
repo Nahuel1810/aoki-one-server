@@ -40,6 +40,17 @@ export type ErrorDeAdmision =
     }
   /** No hay fila en `robots` para esa estanteria: ya no existe el fallback identidad. */
   | { readonly codigo: 'ROBOT_NO_REGISTRADO'; readonly estanteriaCode: string }
+  /**
+   * PUT sobre un `locationCode` que no es un slot de la zona de pickeo.
+   *
+   * Para un PUT el `locationCode` ES el slot del que sale el cajon, asi que uno
+   * que no existe no es una devolucion posible: es un typo. El legacy lo
+   * rechazaba al crear la orden ("PUT requiere locationCode de zona pickeo
+   * configurada", `OrchestratorService.js`), y sin este rechazo la orden entraba
+   * con 202, quedaba PENDING para siempre esperando un slot que no va a existir
+   * nunca y se llevaba puesta la cola del robot.
+   */
+  | { readonly codigo: 'PUT_FUERA_DE_ZONA_DE_PICKEO'; readonly recibido: string }
 
 /**
  * Id externo de una orden que nace en el agente (RF35).
@@ -100,6 +111,20 @@ export async function admitirOrden(
     )
     if (existente !== undefined) {
       return { ok: true, valor: { tipo: 'YA_EXISTIA', orden: existente } }
+    }
+  }
+
+  // Paridad con el legacy: un PUT solo puede salir de un slot configurado. Se
+  // valida ACA, en la admision, y no mas adelante en el loop, porque es la unica
+  // capa que puede contestarle 400 a la tablet mientras el operario todavia esta
+  // mirando la pantalla.
+  if (pedido.tipo === 'PUT') {
+    const slot = await repositorios.slots.buscar(robotId, ubicacion.valor.baseCode)
+    if (slot === undefined) {
+      return {
+        ok: false,
+        error: { codigo: 'PUT_FUERA_DE_ZONA_DE_PICKEO', recibido: ubicacion.valor.baseCode },
+      }
     }
   }
 
