@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 
 import { abrirBase } from './database.js'
 import { crearSlotRepository } from './slotRepository.js'
+import type { SlotDeRobot } from './slotRepository.js'
 
 describe('slotRepository', () => {
   it('rechaza guardar el estado de un slot que no existe en la zona de pickeo', async () => {
@@ -84,5 +85,65 @@ describe('slotRepository', () => {
     } finally {
       base.cerrar()
     }
+  })
+})
+
+describe('el estado guardado del slot se valida al leer', () => {
+  // Es el dato del accidente. Si la fila no se entiende y se la da por LIBRE, el
+  // proximo PICK manda el carro contra un cajon que quiza sigue apoyado. El unico
+  // aterrizaje seguro es ERROR: el slot queda fuera de juego hasta que alguien lo
+  // mire. Tirar tampoco sirve — una fila ilegible dejaria al robot entero sin
+  // arrancar.
+  //
+  // Se escribe la fila CRUDA a proposito: por la interfaz del repositorio no se
+  // puede guardar un estado invalido, y estas filas no vienen del repositorio
+  // sino de una migracion, de un esquema anterior o de alguien que edito SQLite a
+  // mano para destrabar algo.
+  async function leerConFilaCruda(estadoJson: string): Promise<SlotDeRobot | undefined> {
+    const base = abrirBase(':memory:')
+    try {
+      const repositorio = crearSlotRepository(base)
+      base.sql
+        .prepare(
+          'INSERT INTO slots (robot_id, location_code, lado, estado_json, actualizado_en) ' +
+            'VALUES (?, ?, ?, ?, 0)',
+        )
+        .run('1', '3X02AE1', 'RIGHT', estadoJson)
+      return await repositorio.buscar('1', '3X02AE1')
+    } finally {
+      base.cerrar()
+    }
+  }
+
+  it('un JSON roto no se lee como LIBRE: queda en ERROR con el motivo', async () => {
+    const slot = await leerConFilaCruda('{esto no es json')
+
+    expect(slot?.estado.estado).toBe('ERROR')
+    if (slot?.estado.estado === 'ERROR') {
+      // El motivo nombra el slot: quien lo abre tiene que saber cual ir a mirar.
+      expect(slot.estado.motivo).toContain('3X02AE1')
+    }
+  })
+
+  it('un estado que no existe en la maquina tampoco pasa', async () => {
+    const slot = await leerConFilaCruda(JSON.stringify({ estado: 'VOLANDO' }))
+    expect(slot?.estado.estado).toBe('ERROR')
+  })
+
+  it('un OCUPADO sin cajon no pasa: el estado exige el contenido', async () => {
+    // Es la fila que mas importa. Un OCUPADO al que le falta el cajon, leido sin
+    // validar, deja `contenido` en undefined y el codigo de mas arriba se lo
+    // encuentra donde el tipo promete que hay un cajon.
+    const slot = await leerConFilaCruda(JSON.stringify({ estado: 'OCUPADO' }))
+    expect(slot?.estado.estado).toBe('ERROR')
+  })
+
+  it('un estado valido se lee tal cual, con su cajon', async () => {
+    const guardado = {
+      estado: 'OCUPADO',
+      contenido: { cajon: { id: 'CAJON-1', ubicacionDeOrigen: '3X04AA3' }, pendingReturns: 2 },
+    }
+    const slot = await leerConFilaCruda(JSON.stringify(guardado))
+    expect(slot?.estado).toEqual(guardado)
   })
 })

@@ -16,6 +16,8 @@ import type {
   SlotInexistente,
 } from '@aoki-one/domain'
 
+import { z } from 'zod'
+
 import type { BaseDelAgente } from './database.js'
 import { parsearLocationCode } from '@aoki-one/domain'
 
@@ -93,6 +95,69 @@ export interface SlotRepository {
   ) => Promise<Result<readonly SlotDeRobot[], ErrorDeZonaDePickeo>>
 }
 
+/**
+ * La forma persistida de cada variante de `EstadoSlot`.
+ *
+ * Se valida al LEER y no solo al escribir porque la fila puede venir de una
+ * migracion, de una version anterior del esquema o de alguien que edito SQLite
+ * a mano para destrabar algo — que es exactamente lo que pasa en una sucursal a
+ * las 3 AM. El resto de los JSON de esta base ya se validan asi
+ * (`leerMapaDeRegistros` en deviceRepository); este era el unico que entraba con
+ * un cast, y es el dato del accidente.
+ */
+const CAJON_EN_SLOT = z.object({
+  cajon: z.object({ id: z.string(), ubicacionDeOrigen: z.string() }),
+  pendingReturns: z.number().int(),
+})
+
+const ESTADO_PERSISTIDO = z.discriminatedUnion('estado', [
+  z.object({ estado: z.literal('LIBRE') }),
+  z.object({
+    estado: z.literal('RESERVADO'),
+    ordenId: z.string(),
+    contenido: CAJON_EN_SLOT.nullable(),
+  }),
+  z.object({ estado: z.literal('BUSCANDO'), ordenId: z.string() }),
+  z.object({ estado: z.literal('OCUPADO'), contenido: CAJON_EN_SLOT }),
+  z.object({
+    estado: z.literal('DEVOLVIENDO'),
+    ordenId: z.string(),
+    contenido: CAJON_EN_SLOT.nullable(),
+  }),
+  z.object({ estado: z.literal('ERROR'), motivo: z.string() }),
+])
+
+/**
+ * El estado del slot, o ERROR si la fila no se puede interpretar.
+ *
+ * ERROR y NO `LIBRE`: un slot que no se entiende puede tener un cajon apoyado, y
+ * declararlo libre es exactamente la mentira que hace que el proximo PICK mande
+ * el carro contra ese cajon. Tirar tampoco sirve —un slot ilegible dejaria al
+ * robot entero sin arrancar—, asi que el slot queda fuera de juego, con el
+ * motivo adentro, hasta que alguien lo mire. Es el mismo criterio con el que la
+ * migracion aterriza un OCUPADO que no puede traducir.
+ */
+function leerEstadoDeSlot(json: string, locationCode: string): EstadoSlot {
+  let crudo: unknown
+  try {
+    crudo = JSON.parse(json)
+  } catch {
+    return {
+      estado: 'ERROR',
+      motivo: `el estado guardado de ${locationCode} no es JSON valido. Mira el slot y liberalo a mano cuando sepas que tiene.`,
+    }
+  }
+
+  const validado = ESTADO_PERSISTIDO.safeParse(crudo)
+  if (!validado.success) {
+    return {
+      estado: 'ERROR',
+      motivo: `el estado guardado de ${locationCode} no es un estado de slot conocido. Mira el slot y liberalo a mano cuando sepas que tiene.`,
+    }
+  }
+  return validado.data
+}
+
 export function crearSlotRepository(base: BaseDelAgente): SlotRepository {
   const { sql } = base
 
@@ -101,7 +166,7 @@ export function crearSlotRepository(base: BaseDelAgente): SlotRepository {
       robotId: fila.robot_id,
       locationCode: fila.location_code,
       lado: fila.lado as Lado,
-      estado: JSON.parse(fila.estado_json) as EstadoSlot,
+      estado: leerEstadoDeSlot(fila.estado_json, fila.location_code),
       actualizadoEn: fila.actualizado_en,
     }
   }

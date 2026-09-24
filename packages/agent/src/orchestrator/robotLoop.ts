@@ -243,54 +243,66 @@ export async function ejecutarCicloDeRobot(
   const targetLocation = slot.valor.targetLocation
 
   // Toma del robot y del slot, y arranque de la orden.
+  //
+  // La toma y la suelta van en try/finally: `ordenActivaId` no es un dato de
+  // pantalla, es el que hace que `ejecutarCicloDeRobot` vea al robot OCUPADO y no
+  // tome nada mas. Si algo entre las dos tira —y en este modulo no hay un solo
+  // catch: better-sqlite3 lanza SINCRONO ante un SQLITE_BUSY o un disco lleno— el
+  // puntero queda apuntando a una orden que ya no corre y el robot deja de
+  // trabajar. La rehidratacion lo limpia en cada arranque, asi que reiniciar
+  // arregla; el finally es para no necesitar el reinicio.
   await repositorios.robots.fijarOrdenActiva(robotId, orden.id)
-  await aplicarTransicionDeOrden(
-    dependencias,
-    orden.id,
-    {
-      estado: 'IN_PROGRESS',
+  try {
+    await aplicarTransicionDeOrden(
+      dependencias,
+      orden.id,
+      {
+        estado: 'IN_PROGRESS',
+        slotLocationCode,
+        waitingForSlot: false,
+        iniciadaEn: reloj.ahoraMs(),
+      },
+      'IN_PROGRESS',
+      { robotId, slotLocationCode },
+    )
+
+    await registrarEvento(dependencias, orden.id, 'ORDER_STARTED', 'INFO', {
+      robotId,
       slotLocationCode,
-      waitingForSlot: false,
-      iniciadaEn: reloj.ahoraMs(),
-    },
-    'IN_PROGRESS',
-    { robotId, slotLocationCode },
-  )
+    })
+    log.info('ORDER_STARTED', { robotId, slotLocationCode, tipo: orden.tipo })
 
-  await registrarEvento(dependencias, orden.id, 'ORDER_STARTED', 'INFO', {
-    robotId,
-    slotLocationCode,
-  })
-  log.info('ORDER_STARTED', { robotId, slotLocationCode, tipo: orden.tipo })
+    const ejecucion = await ejecutarManiobra(
+      dependencias,
+      { ...orden, slotLocationCode, targetLocation },
+      log,
+    )
 
-  const ejecucion = await ejecutarManiobra(
-    dependencias,
-    { ...orden, slotLocationCode, targetLocation },
-    log,
-  )
+    await registrarEvento(
+      dependencias,
+      orden.id,
+      ejecucion.estadoFinal === 'DONE' ? 'ORDER_DONE' : 'ORDER_FAILED',
+      ejecucion.estadoFinal === 'DONE' ? 'INFO' : 'ERROR',
+      { robotId },
+    )
 
-  await registrarEvento(
-    dependencias,
-    orden.id,
-    ejecucion.estadoFinal === 'DONE' ? 'ORDER_DONE' : 'ORDER_FAILED',
-    ejecucion.estadoFinal === 'DONE' ? 'INFO' : 'ERROR',
-    { robotId },
-  )
+    if (ejecucion.estadoFinal === 'DONE') {
+      log.info('ORDER_DONE', { robotId })
+    } else {
+      log.error('ORDER_FAILED', { robotId, etapa: 'MANIOBRA' })
+    }
 
-  if (ejecucion.estadoFinal === 'DONE') {
-    log.info('ORDER_DONE', { robotId })
-  } else {
-    log.error('ORDER_FAILED', { robotId, etapa: 'MANIOBRA' })
+    return {
+      tipo: 'ORDEN_TERMINADA',
+      ordenId: orden.id,
+      estadoFinal: ejecucion.estadoFinal,
+      huboManiobra: true,
+    }
+  } finally {
+    // SIEMPRE, incluso si la maniobra tiro: ver el comentario de la toma.
+    await repositorios.robots.fijarOrdenActiva(robotId, null)
   }
 
-  await repositorios.robots.fijarOrdenActiva(robotId, null)
-
-  return {
-    tipo: 'ORDEN_TERMINADA',
-    ordenId: orden.id,
-    estadoFinal: ejecucion.estadoFinal,
-    huboManiobra: true,
-  }
 }
 
 /**

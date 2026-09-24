@@ -26,6 +26,28 @@ const ESQUEMA = `
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
+  -- foreign_keys queda ENCENDIDA aunque hoy NINGUNA tabla declare un REFERENCES,
+  -- asi que no exige nada. Se deja dicho por que, para que quien lea el esquema no
+  -- asuma una integridad que no existe:
+  --
+  --   - Varias relaciones NO PUEDEN tener FK porque los ciclos de vida difieren a
+  --     proposito. order_metrics sobrevive a la purga de orders (es el historico
+  --     con el que se mide la operacion) y outbox_muertas archiva transiciones de
+  --     ordenes que tal vez ya se purgaron. Una FK ahi obligaria a elegir entre
+  --     bloquear la purga o borrar el historico, y las dos son peores que no
+  --     tenerla.
+  --   - El resto (slots, devices, order_steps contra su robot o su orden) SI
+  --     podria tenerla, pero hay un solo escritor y las escrituras van por
+  --     repositorios tipados. Agregar constraints a una base que ya opera un robot
+  --     cambia el modo de falla de "fila huerfana" a "insert que revienta en
+  --     planta", y eso se decide con la planta parada, no de paso.
+  --   - CREATE TABLE IF NOT EXISTS no agrega constraints a una tabla que ya
+  --     existe, asi que sumarlas mas adelante es una migracion de verdad y no una
+  --     linea en este archivo.
+  --
+  -- O sea: la integridad la sostiene el codigo, no la base. Si eso cambia, se
+  -- cambia aca y con su migracion.
+
   CREATE TABLE IF NOT EXISTS robots (
     id               TEXT PRIMARY KEY,
     site_id          TEXT NOT NULL,
@@ -73,6 +95,22 @@ const ESQUEMA = `
     PRIMARY KEY (robot_id, location_code)
   );
 
+  -- OJO: hay DOS tablas llamadas orders en este repositorio, en dos bases
+  -- distintas y de dos procesos distintos, y significan cosas distintas.
+  --
+  --   ESTA (packages/agent)      la EJECUCION. Que esta haciendo el robot con
+  --                              cada orden: que slot tomo, en que paso va,
+  --                              cuantos intentos lleva. Una orden vive aca desde
+  --                              que el agente la reclama hasta que la termina.
+  --   packages/server            la ADMISION. Que pedidos existen y cual ya se
+  --                              atendio. No sabe de slots, ni de cajones, ni de
+  --                              PLCs.
+  --
+  -- Ninguna reescribe el libro de la otra, y el puente entre las dos es
+  -- sync_ordenes (id local <-> id remoto). El nombre se conserva igual en las dos
+  -- porque las rutas HTTP que las exponen —/api/orders aca y /api/v1/orders
+  -- alla— son contrato con la tablet y con la app de picking: renombrar la tabla
+  -- sin poder renombrar la ruta cambiaria una confusion por otra.
   CREATE TABLE IF NOT EXISTS orders (
     id                 TEXT PRIMARY KEY,
     site_id            TEXT NOT NULL,
