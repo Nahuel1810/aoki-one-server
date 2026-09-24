@@ -1,0 +1,80 @@
+# Servidor de pedidos AOKI ONE.
+#
+# Levanta SOLO el servidor. El agente corre en la notebook de la sucursal (única
+# máquina que llega a los PLC por Modbus) y el frontend es estático: ninguno de
+# los dos va acá.
+
+services:
+  aoki-server:
+    build:
+      # El contexto es la raíz del repo, no esta carpeta: el build necesita el
+      # package-lock.json y los workspaces.
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: aoki-one-server:latest
+    container_name: aoki-server
+    restart: unless-stopped
+
+    env_file:
+      - ./servidor.env
+
+    # Publicado SOLO en loopback del host. Lo que expone el servicio a internet
+    # es el reverse proxy, que es donde además termina el TLS. Si tu proxy ya
+    # corre en Docker, comentá este bloque y usá la red compartida de abajo: así
+    # el puerto no queda publicado ni siquiera en el host.
+    ports:
+      - '127.0.0.1:8080:8080'
+
+    volumes:
+      # La base es el libro de la ADMISIÓN de pedidos: qué pidió picking y qué se
+      # atendió. Sin este volumen, un `docker compose down` se lleva la cola
+      # entera y las órdenes en vuelo dejan de existir para la app de picking.
+      - aoki-datos:/datos
+
+    healthcheck:
+      # Con node y no con curl: la imagen es slim y no trae curl. `fetch` es
+      # global desde Node 18.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # El primer arranque abre la base y aplica el esquema: no se lo cuenta como
+      # falla mientras eso pasa.
+      start_period: 15s
+
+    # Una línea JSON por evento a stdout. Sin rotación, el disco se llena y el
+    # síntoma es una sucursal que deja de reportar por un motivo que no tiene
+    # nada que ver con la aplicación.
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+    # Endurecimiento barato: el proceso ya corre como `node` (no root) desde la
+    # imagen, y no necesita escribir en ningún lado salvo el volumen.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+    # Si tu reverse proxy ya está en Docker, descomentá esto y el bloque
+    # `networks` de abajo, y sacá el `ports`. El proxy le pega por nombre de
+    # servicio: http://aoki-server:8080
+    # networks:
+    #   - proxy
+
+volumes:
+  aoki-datos:
+    driver: local
+# networks:
+#   proxy:
+#     external: true
+#     name: <el nombre de la red de tu proxy>

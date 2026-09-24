@@ -1,0 +1,29 @@
+# Contexto de build del servidor. Todo lo que no entra achica el contexto y evita
+# invalidar capas de cache por archivos que la imagen no usa.
+
+node_modules
+packages/*/node_modules
+packages/*/dist
+*.tsbuildinfo
+
+# El frontend y el agente no van en la imagen del servidor.
+packages/web
+packages/agent/src
+
+# El servidor legacy en JavaScript.
+src
+tests
+scripts
+public
+public-dist
+
+# Datos y secretos: la base va en un volumen y las variables por entorno. Que un
+# .env entre al contexto de build es como termina un secreto adentro de una capa.
+.env
+.env.example
+data
+coverage
+.git
+.github
+docs
+deploy
