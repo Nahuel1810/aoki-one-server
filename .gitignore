@@ -2,8 +2,12 @@ node_modules/
 data/persistence.db
 data/persistence.db-shm
 data/persistence.db-wal
+# El .env real NO va: tiene los valores de la sucursal.
 .env
-.env.example
+# .env.example SI va. Es la plantilla, no tiene un solo secreto, y es lo que
+# documenta con que numeros corre la planta —presupuestosDeTiempo.test.ts los
+# compara contra este archivo, asi que ignorarlo dejaba ese test imposible de
+# correr en CI.
 public-dist/
 packages/*/dist/
 *.tsbuildinfo
