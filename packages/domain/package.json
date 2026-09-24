@@ -1,0 +1,19 @@
+{
+  "name": "@aoki-one/domain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Logica pura del dominio de Aoki One: tipos, reglas y maquinas de estado sin I/O",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  }
+}
