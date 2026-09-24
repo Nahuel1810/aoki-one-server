@@ -125,6 +125,12 @@ dispositivo, clasificación de errores de conectividad, ranking de slot por cerc
     un cajón que no debería estar. El destino se compara por `baseCode`, así que el
     sufijo de acción no lo esquiva, y un destino que no parsea se rechaza en vez de
     pasar sin verificar.
+  - **El invariante, en general**: los libros nunca dicen que un slot está libre
+    mientras tiene un cajón encima. El destino del PUT es una de las puertas a ese
+    estado, no la única — el daño no lo hace el PUT sino el PICK siguiente, que
+    elige el slot porque figura disponible. Vale para **cualquier** camino que
+    marque un slot como libre: ver RF21 (liberación manual) y T23 (migración: un slot
+    que no se puede traducir queda en `ERROR`, nunca salteado y recreado libre).
 - **RF12** Avance por confirmación, no por envío: un paso solo avanza cuando el PLC
   responde el código esperado y se verifica el reset de registros.
 - **RF13** Recuperación ante fallo de paso — invariante único: **el operario devuelve el
@@ -222,6 +228,12 @@ Desvíos respecto del legacy, deliberados:
   consulta y listado, retry, cancel, pausa/reanudación de cola, registro y estado de
   dispositivos, comando directo a PLC, listado y liberación manual de slots, métricas,
   health. El ingreso de pedidos de picking ya no entra por acá: entra por el servidor (RF26).
+  - La **liberación manual** corrige los libros y no mueve el robot. Si el slot tiene un
+    cajón **en libros** (OCUPADO siempre; RESERVADO y DEVOLVIENDO según RF11), liberarlo
+    lo borra del inventario, así que exige declarar explícitamente que el cajón ya no
+    está; sin la declaración se rechaza diciendo de dónde salió el cajón, para que la
+    persona vaya a mirarlo. Sin cajón en libros libera directo: es la salida que destraba
+    un PICK fallido, y bloquearla dejaría el slot muerto hasta editar SQLite a mano.
 - **RF22** Autorización de la API local en dos niveles, **sin login de usuario**:
   - **Operario — sin credencial.** Todo lo que consume la tablet: slots, alta de órdenes
     manuales, retry, cancel, pausa/reanudación, liberación manual de slot, listado y alta
