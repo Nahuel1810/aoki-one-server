@@ -5,3 +5,6 @@ data/persistence.db-wal
 .env
 .env.example
 public-dist/
+packages/*/dist/
+*.tsbuildinfo
+coverage/

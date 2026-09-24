@@ -1,0 +1,65 @@
+# Unidad de systemd del servidor de pedidos de Aoki One.
+#
+# Instalar en /etc/systemd/system/aoki-one-server.service
+#   systemctl daemon-reload
+#   systemctl enable --now aoki-one-server
+#
+# Ver deploy/README.md para el resto del despliegue (usuario, directorios, proxy).
+
+[Unit]
+Description=Aoki One - servidor de pedidos
+Documentation=file:///opt/aoki-one/deploy/README.md
+# network-online y no network: el servidor abre el puerto al arrancar y sin ruta
+# configurada el bind falla y systemd lo reintenta por nada.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aoki
+Group=aoki
+WorkingDirectory=/opt/aoki-one
+ExecStart=/usr/bin/node /opt/aoki-one/packages/server/dist/index.js
+
+# La clave de cifrado de credenciales vive aca, NO en la linea de comando:
+# /proc/<pid>/cmdline lo lee cualquiera, el archivo va 0600 y de root.
+EnvironmentFile=/etc/aoki-one/servidor.env
+
+Restart=on-failure
+RestartSec=5s
+# El proceso sale con 1 cuando la configuracion esta mal (falta una variable, la
+# clave no es valida). Reintentar eso es un bucle infinito que llena el journal y
+# esconde el problema: la unidad queda en failed hasta que alguien la corrija.
+RestartPreventExitStatus=1
+
+# Cierre ordenado: el proceso atiende SIGTERM, deja de escuchar y recien entonces
+# cierra SQLite. 35 s le dan margen a un long-poll de 25 s para terminar solo.
+KillSignal=SIGTERM
+TimeoutStopSec=35
+
+# Logs: una linea JSON por evento a stdout y el journal se encarga del resto.
+# No hay archivo propio ni logrotate: dos rotaciones sobre el mismo log es como
+# se pierden logs.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aoki-one-server
+
+# Endurecimiento. El servidor es el UNICO componente expuesto a internet.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Unico lugar donde puede escribir: su base y el WAL de SQLite.
+StateDirectory=aoki-one
+ReadWritePaths=/var/lib/aoki-one
+# NO agregar MemoryDenyWriteExecute=yes: V8 compila en runtime y el proceso no
+# arranca.
+
+[Install]
+WantedBy=multi-user.target
