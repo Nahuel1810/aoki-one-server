@@ -2,6 +2,9 @@
   "name": "@aoki-one/server",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "Servidor de pedidos: ingreso HMAC, cola durable y entrega al agente por long-poll",
   "main": "./dist/index.js",

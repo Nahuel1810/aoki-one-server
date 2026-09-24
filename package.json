@@ -2,6 +2,9 @@
   "name": "aoki-one-server",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "description": "Servidor modular para orquestacion de robots PLC por Modbus TCP",
   "main": "src/server.js",
   "type": "commonjs",

@@ -87,7 +87,7 @@ Variables, con sus defaults:
 | `AOKI_AGENT_HTTP_BIND`              | `127.0.0.1` | Loopback: la tablet **no** llega. Se escribe la IP de LAN (ver punto 0.2).                            |
 | `AOKI_AGENT_MONTAR_API`             | `true`      | —                                                                                                     |
 | `AOKI_AGENT_SIMULAR_PLC`            | `false`     | El robot **no** se mueve pero la API contesta OK. En produccion queda en false (RF20).                |
-| `AOKI_AGENT_TOKEN_DE_MANTENIMIENTO` | vacio       | Comando directo a PLC **deshabilitado** (RF22). Falla cerrado a proposito.                            |
+| `AOKI_AGENT_TOKEN_DE_MANTENIMIENTO` | vacio       | Comando directo a PLC **y alta de dispositivos** deshabilitados (RF22). Falla cerrado. Ver punto 5.   |
 | `AOKI_AGENT_SERVIDOR_URL`           | vacio       | Enlace **apagado**: cola local y nada mas (T26).                                                      |
 | `AOKI_AGENT_KEY_ID`                 | vacio       | idem.                                                                                                 |
 | `AOKI_AGENT_SECRETO`                | vacio       | idem.                                                                                                 |
@@ -160,6 +160,52 @@ Eventos del ciclo de vida: `AGENT_STARTED`, `AGENT_LISTENING`,
 
 **El secreto del enlace nunca sale en el log.** La URL del servidor si: es lo que
 se mira cuando la sucursal deja de reportar y hay un proxy o un DNS de por medio.
+
+---
+
+## 5.1 Dar de alta los dos PLC del robot
+
+Sin este paso el agente arranca, contesta `/health` y **no puede hablar con
+ningun PLC**: no sabe a que direccion escribirle. Es lo primero que se hace con
+el servicio ya corriendo.
+
+Necesita el token de mantenimiento configurado (punto 3): el alta decide por que
+host, puerto y `unitId` se le habla al PLC, o sea que decide a quien le obedece
+el robot. Sin token responde **503**, no 401 — no es que falte la credencial, es
+que la capacidad no esta habilitada en este agente.
+
+```powershell
+$token = @{ "x-aoki-maintenance-token" = "<el mismo del .env>" }
+
+# El carro
+Invoke-RestMethod -Method Post -Uri http://<ip-de-lan>:3000/api/devices/register `
+  -Headers $token -ContentType application/json -Body (@{
+    robotId = "1"; type = "CARRO"; host = "<ip-del-plc-carro>"; port = 502; unitId = <el-del-plc>
+  } | ConvertTo-Json)
+
+# El elevador
+Invoke-RestMethod -Method Post -Uri http://<ip-de-lan>:3000/api/devices/register `
+  -Headers $token -ContentType application/json -Body (@{
+    robotId = "1"; type = "ELEVADOR"; host = "<ip-del-plc-elevador>"; port = 502; unitId = <el-del-plc>
+  } | ConvertTo-Json)
+```
+
+`unitId`: sale del PLC, no de este ejemplo. El default del alta es **255** y los
+Festo de planta **no usan 1**, asi que copiar un `1` de cualquier tutorial de
+Modbus es la forma mas rapida de que el comando salga y no lo escuche nadie.
+`port` y `timeoutMs` tienen default (502 y 2000) y se pueden omitir. Si el dispositivo no vive en el registro 0, se agrega
+`registerMap = @{ messageIn = <n>; messageOut = <m> }` al cuerpo: cableado en 0,
+un PLC que usa otra direccion **no falla**, se le escribe el comando a otro
+registro, que es peor que no escribirlo.
+
+Queda comprobado en el health, que dice `connected` por dispositivo:
+
+```powershell
+(Invoke-RestMethod http://<ip-de-lan>:3000/health).devices
+```
+
+El alta es idempotente por `(robotId, tipo)`: repetirla actualiza la direccion en
+vez de duplicar el dispositivo, asi que es tambien la forma de mover un PLC de IP.
 
 ---
 
