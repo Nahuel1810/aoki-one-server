@@ -24,6 +24,11 @@ type DeviceType = 'CARRO' | 'ELEVADOR'
  *
  * El backend hace upsert por (robotId, type), asi que editar es registrar de
  * nuevo con los mismos identificadores.
+ *
+ * Pide el token de mantenimiento del agente cada vez y no lo guarda: ni en
+ * localStorage —la tablet es compartida— ni en el build, que es el JS que se le
+ * sirve a cualquiera en la LAN. Configurar un equipo es algo que se hace una vez
+ * por instalacion; tipear el token no es friccion, dejarlo a mano si.
  */
 export function DeviceFormSheet({ device, onDone }: { device: Device | null; onDone: () => void }) {
   const register = useRegisterDevice()
@@ -31,12 +36,17 @@ export function DeviceFormSheet({ device, onDone }: { device: Device | null; onD
   const [type, setType] = useState<DeviceType>(device?.type ?? 'CARRO')
   const [host, setHost] = useState(device?.host ?? '')
   const [port, setPort] = useState(String(device?.port ?? 502))
+  const [token, setToken] = useState('')
 
   const isEdit = device !== null
   const portNumber = Number(port)
   const portValid = Number.isInteger(portNumber) && portNumber > 0 && portNumber <= 65535
   const canSubmit =
-    robotId.trim().length > 0 && host.trim().length > 0 && portValid && !register.isPending
+    robotId.trim().length > 0 &&
+    host.trim().length > 0 &&
+    portValid &&
+    token.trim().length > 0 &&
+    !register.isPending
 
   return (
     <Sheet title={isEdit ? `Configurar ${device.type.toLowerCase()}` : 'Agregar equipo'}>
@@ -45,7 +55,13 @@ export function DeviceFormSheet({ device, onDone }: { device: Device | null; onD
         onSubmit={(event) => {
           event.preventDefault()
           register.mutate(
-            { robotId: robotId.trim(), type, host: host.trim(), port: portNumber },
+            {
+              robotId: robotId.trim(),
+              type,
+              host: host.trim(),
+              port: portNumber,
+              maintenanceToken: token.trim(),
+            },
             { onSuccess: onDone },
           )
         }}
@@ -121,6 +137,25 @@ export function DeviceFormSheet({ device, onDone }: { device: Device | null; onD
             )}
           </Field>
         </div>
+
+        <Field
+          label="Token de mantenimiento"
+          hint="El que figura en la configuración del agente. No se guarda."
+        >
+          {(props) => (
+            <Input
+              {...props}
+              required
+              type="password"
+              value={token}
+              onChange={(event) => {
+                setToken(event.target.value)
+              }}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          )}
+        </Field>
 
         <Button type="submit" disabled={!canSubmit} block>
           {register.isPending ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Agregar equipo'}

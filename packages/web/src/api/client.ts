@@ -97,10 +97,24 @@ export async function apiGet<T>(path: string, schema: z.ZodType<T>): Promise<T> 
   return parsed.data
 }
 
+/**
+ * Header del token de mantenimiento del agente (RF22).
+ *
+ * Lo exigen las dos operaciones que deciden que hace el robot: el alta de un
+ * equipo —a que PLC le habla— y el comando directo al PLC. El resto de la API va
+ * sin credencial, para que la operacion diaria no dependa de un secreto.
+ */
+export const MAINTENANCE_TOKEN_HEADER = 'x-aoki-maintenance-token'
+
 /** POST sin validacion de respuesta: se usa por el efecto, no por el payload. */
-export async function apiPost(path: string, body?: unknown): Promise<void> {
+export async function apiPost(
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+): Promise<void> {
   await request(path, {
     method: 'POST',
+    ...(headers === undefined ? {} : { headers }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
 }

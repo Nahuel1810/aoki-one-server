@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query'
-import { apiPost } from './client'
+import { apiPost, MAINTENANCE_TOKEN_HEADER } from './client'
 import { queryKeys } from './queries'
 
 /** Invalida todo lo que se ve afectado cuando cambia la operacion. */
@@ -106,13 +106,22 @@ export type RegisterDeviceInput = {
   type: 'CARRO' | 'ELEVADOR'
   host: string
   port: number
+  /**
+   * Token de mantenimiento del agente. Viaja como header, no en el body: dar de
+   * alta un equipo decide a que PLC le obedece el robot, y el agente lo rechaza
+   * sin credencial (401) o si no tiene token configurado (503).
+   */
+  maintenanceToken: string
 }
 
 export function useRegisterDevice(): UseMutationResult<void, Error, RegisterDeviceInput> {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (input: RegisterDeviceInput) => apiPost('/api/devices/register', input),
+    mutationFn: ({ maintenanceToken, ...device }: RegisterDeviceInput) =>
+      apiPost('/api/devices/register', device, {
+        [MAINTENANCE_TOKEN_HEADER]: maintenanceToken,
+      }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.devices }),
